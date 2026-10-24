@@ -45,7 +45,7 @@ HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它
 
 ### 3.1 安装步骤
 
-前置条件：已 root，装了 LSPosed（或 libxposed 系框架，如 LSPosed 的 modern API 分支）。**不需要** Magisk 元模块、不需要 Font Loader、不读写系统分区。
+前置条件：已 root，装了 LSPosed（或 libxposed 系框架，如 LSPosed 的 modern API 分支）。**不需要**元模块、不需要 Font Loader、不读写系统分区。
 
 1. 安装 `HyperFontFix-v1.0-alpha.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
 2. 打开 LSPosed → 模块 → 启用 HyperFontFix，作用域只勾 **System UI（`com.android.systemui`）**（模块自带 scope 声明，正常只会列出这一个）；
@@ -128,7 +128,7 @@ adb shell settings put system hf_ff_date 500
 # 超级岛胶囊态的文字也加粗
 adb shell settings put system hf_ff_island 600
 
-# 一键回到 v4.0 那种「状态栏全部加粗」的观感
+# 一键回到「状态栏全部加粗」的观感
 adb shell settings put system hf_ff_all 660
 
 # 关掉所有实验通道，回到精确模式
