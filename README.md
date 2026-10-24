@@ -49,7 +49,7 @@ HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它
 
 1. 安装 `HyperFontFix-v1.0-alpha.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
 2. 打开 LSPosed → 模块 → 启用 HyperFontFix，作用域只勾 **System UI（`com.android.systemui`）**（模块自带 scope 声明，正常只会列出这一个）；
-3. **重启一次手机**。这是唯一必须重启的一步：HyperOS 上 SystemUI 不能用 shell 优雅重启，注入只发生在进程启动时；
+3. **重启一次SystemUI**。这是唯一必须重启的一步：注入只发生在进程启动时；
 4. 之后在主题商店应用你的第三方可变字体，状态栏那几处应该已经回到原生观感；
 5. 验证：
 
