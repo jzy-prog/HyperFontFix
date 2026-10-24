@@ -1,0 +1,14 @@
+# keep the repo bytes-stable across platforms: LF in the index, LF on disk
+* text=auto eol=lf
+
+# never let git touch binaries
+*.apk binary
+*.jar binary
+*.dex binary
+*.aar binary
+*.zip binary
+*.png binary
+*.ttf binary
+*.otf binary
+*.keystore binary
+*.arsc binary

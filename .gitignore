@@ -1,0 +1,43 @@
+# ---- build output ----------------------------------------------------
+module/build/
+*.apk
+*.dex
+
+# ---- python scratch --------------------------------------------------
+__pycache__/
+*.pyc
+.tmp_*
+
+# ---- downloaded toolchain (third-party, not our source) --------------
+tools/jdk/
+tools/jre/
+tools/sdk/
+tools/aapt2/
+tools/adb/
+tools/jars/
+tools/stubs/out/
+tools/signsrc/classes/
+tools/*.zip
+tools/repo23.xml
+
+# ---- reverse-engineering material: proprietary, MUST NOT be published
+# Xiaomi system code (MiuiSystemUI / framework / services) and the dumps
+# derived from it, plus the applied theme font, which is proprietary too.
+/MiuiSystemUI.apk
+/framework.jar
+/services.jar
+/fw/
+/svc/
+/sui/
+/smali_c1/
+/smali_c2/
+/smali_c3/
+/refs/
+/fonts/
+/tools/callsites.txt
+
+# ---- device captures & agent scratch ---------------------------------
+/lslog*/
+/.adbhome/
+*.log
+PROGRESS.md

@@ -1,0 +1,4 @@
+"D:\Projects\hyperfontfix\tools\stubs\androidx\annotation\NonNull.java"
+"D:\Projects\hyperfontfix\tools\stubs\androidx\annotation\Nullable.java"
+"D:\Projects\hyperfontfix\tools\stubs\androidx\annotation\RequiresApi.java"
+"D:\Projects\hyperfontfix\tools\stubs\io\github\libxposed\annotation\SinceApi.java"

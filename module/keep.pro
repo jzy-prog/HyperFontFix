@@ -1,0 +1,2 @@
+-keep class hf.fontfix.** { *; }
+-dontwarn de.robv.android.xposed.**
