@@ -74,6 +74,8 @@ public final class Core {
     private static final int ROLE_DATE = 5;
     private static final int ROLE_ISLAND = 6;
     private static final int ROLE_OTHER = 7;
+    /** Status-bar network speed indicator: its number and its unit. */
+    private static final int ROLE_SPEED = 9;
 
     /**
      * Class-name patterns that are NOT status-bar text and must keep their own
@@ -140,6 +142,20 @@ public final class Core {
     static final int DEFAULT_DATE = 0;
     static final int DEFAULT_ISLAND = 0;
     static final int DEFAULT_OTHER = 0;
+    /**
+     * 900 is the ROM's own request, not a taste call: the speed indicator takes its
+     * weight from TextAppearance.StatusBar.NetWorkSpeedNumber (0x7f1506c2) and
+     * ...NetWorkSpeedUnit (0x7f1506c3) -- res/layout/network_speed.xml sets nothing
+     * else -- and BOTH styles declare android:fontFamily="mipro-bold" plus
+     * textStyle=bold. /system/etc/fonts.xml maps mipro-bold to
+     * "sans-serif weight=900", so 900 is what MiSansVF is asked for. There is no
+     * baked Typeface anywhere on this path (NetworkSpeedView never touches
+     * MiuiConfigs), so the alias is the only weight signal -- and under a theme font
+     * an alias carries no axis, which is why the label collapses to the fvar default
+     * (330 on the tested font). bakeFromFontFile() clamps to whatever the applied
+     * font can actually do, so a font topping out at 700 lands on 700.
+     */
+    static final int DEFAULT_SPEED = 900;
     /** com.miui.aod is out of scope now; hf_ff_aod=1 re-enables it for experiments. */
     static final int DEFAULT_AOD = 0;
     /**
@@ -176,6 +192,7 @@ public final class Core {
     private static volatile int sDateW = DEFAULT_DATE;
     private static volatile int sIslandW = DEFAULT_ISLAND;
     private static volatile int sOtherW = DEFAULT_OTHER;
+    private static volatile int sSpeedW = DEFAULT_SPEED;
     /** 1 = let H0a/H0b/H0c rewrite mipro-* family resolution process-wide (off default). */
     private static volatile boolean sFamily = DEFAULT_FAMILY != 0;
     /** 1 = let G1 rewrite MiuiConfigs.getMiProTypefaceWght460 for every caller. */
@@ -556,7 +573,8 @@ public final class Core {
                             // container) and the resource ENTRY NAME. Matching ids
                             // generally would be a disaster - AOSP notification rows have
                             // an id called "time".
-                            int idr = inCarrierChip(tv) ? ROLE_CARRIER : roleFromResourceId(tv);
+                            int idr = inCarrierChip(tv) ? ROLE_CARRIER
+                                    : (inSpeedChip(tv) ? ROLE_SPEED : roleFromResourceId(tv));
                             if (idr == ROLE_NONE) {
                                 // Remember the negative verdict too: one parent-chain
                                 // walk and at most one id lookup per view, ever.
@@ -627,10 +645,11 @@ public final class Core {
         } catch (Throwable t) { log("T12 fail: " + t); }
 
         refreshCfg();
-        log("v1.0-alpha PER-ROLE installed, hooks=" + n
+        log("v1.1 PER-ROLE installed, hooks=" + n
                 + " clock=" + sClockW + " net=" + sNetW + " carrier=" + sCarrierW
                 + " batt=" + sBatteryW + " mark=" + sMarkW + " hollow=" + sHollowW
                 + " date=" + sDateW + " island=" + sIslandW + " other=" + sOtherW
+                + " speed=" + sSpeedW
                 + " family=" + (sFamily ? 1 : 0) + " g1=" + (sG1 ? 1 : 0)
                 + " global=" + sGlobalW + " all=" + sAll
                 + " aod=" + (sAod ? 1 : 0)
@@ -703,8 +722,10 @@ public final class Core {
         // Carrier labels win outright: the role can only have come from a class name
         // or a resource entry name that SAYS "carrier", and the lock-screen label is
         // a plain android.widget.TextView with id=carrier_text, i.e. a class the
-        // package list below could never recognise.
-        if (role == ROLE_CARRIER) return true;
+        // package list below could never recognise. The speed indicator is the same
+        // story (id/network_speed_number|_unit); both roles can only have been
+        // earned from a carrier/speed class name or a carrier/speed entry name.
+        if (role == ROLE_CARRIER || role == ROLE_SPEED) return true;
         String n = tv.getClass().getName();
         Boolean known = sDrawFaceOk.get(n);
         if (known != null) {
@@ -1235,6 +1256,9 @@ public final class Core {
             if (c.contains(EXCLUDED_HINTS[i])) return ROLE_ISLAND;
         }
         if (c.contains("mobiletype")) return ROLE_NET;
+        // NetworkSpeedView is a LinearLayout; its two labels are plain TextViews
+        // and are caught by inSpeedChip() / the entry-name rule below.
+        if (c.contains("networkspeed")) return ROLE_SPEED;
         if (c.contains("batterymeter") || c.contains("batterypercent")) return ROLE_BATTERY;
         if (c.contains("carrier")) return ROLE_CARRIER;
         // Date surfaces the user never asked about, and they are reached through the very
@@ -1294,6 +1318,8 @@ public final class Core {
         // hf_ff_carrier knob does nothing at all - which is exactly what happened on
         // the lock screen up to and including v5.6.
         if (inCarrierChip(tv)) return ROLE_CARRIER;
+        // Speed indicator labels: same shape, same need.
+        if (inSpeedChip(tv)) return ROLE_SPEED;
         if (tag != null && tag.intValue() != ROLE_NONE) return tag;
         // Anything else that still flows through MiuiConfigs.applyStatusBarTypeface:
         // ROLE_OTHER, whose default weight is 0 = leave it alone. v4.0 used to fall back
@@ -1351,13 +1377,33 @@ public final class Core {
         return false;
     }
 
+    /**
+     * Network speed labels: res/layout/network_speed.xml is
+     * NetworkSpeedView(LinearLayout) > FrameLayout@id/network_speed_container >
+     * two plain android.widget.TextView (id/network_speed_number, ..._unit). The
+     * class name says nothing, identical to the carrier chip, so walk the parent
+     * chain: same 6-level bound, one walk per view and the verdict is cached.
+     */
+    private static boolean inSpeedChip(android.view.View v) {
+        try {
+            for (int i = 0; v != null && i < 6; i++) {
+                if (v.getClass().getName().toLowerCase().indexOf("networkspeed") >= 0) return true;
+                Object p = v.getParent();
+                v = (p instanceof android.view.View) ? (android.view.View) p : null;
+            }
+        } catch (Throwable ignored) { }
+        return false;
+    }
+
     /** resource entry id -> role; ids are stable within the app, so cache forever. */
     private static final Map<Integer, Integer> sIdRoles =
             new java.util.concurrent.ConcurrentHashMap<Integer, Integer>();
 
     /**
      * Role taken from the view's resource entry name, for views whose class name
-     * gives no clue at all. Carrier labels only (see the T11 call site for why).
+     * gives no clue at all. Carrier and network-speed labels only, and the names
+     * stay deliberately narrow: matching ids generally is a disaster (AOSP
+     * notification rows have an id called "time" -- see the T11 call site).
      */
     private static int roleFromResourceId(TextView tv) {
         int id;
@@ -1369,10 +1415,12 @@ public final class Core {
         String n = null;
         try {
             n = tv.getResources().getResourceEntryName(id);
-            if (n != null && n.toLowerCase().indexOf("carrier") >= 0) r = ROLE_CARRIER;
+            String ln = n == null ? null : n.toLowerCase();
+            if (ln != null && ln.indexOf("carrier") >= 0) r = ROLE_CARRIER;
+            else if (ln != null && ln.indexOf("network_speed") >= 0) r = ROLE_SPEED;
         } catch (Throwable ignored) { }
         sIdRoles.put(Integer.valueOf(id), Integer.valueOf(r));
-        if (r != ROLE_NONE) logOnce("idrole:" + id, "id-role carrier for @" + n);
+        if (r != ROLE_NONE) logOnce("idrole:" + id, "id-role " + roleName(r) + " for @" + n);
         return r;
     }
 
@@ -1403,6 +1451,7 @@ public final class Core {
             case ROLE_NET: return "network";
             case ROLE_CARRIER: return "carrier";
             case ROLE_BATTERY: return "battery";
+            case ROLE_SPEED: return "speed";
             case ROLE_MARK: return "mark";
             case ROLE_HOLLOW: return "hollow";
             case ROLE_DATE: return "date";
@@ -1487,6 +1536,7 @@ public final class Core {
         switch (role) {
             case ROLE_NET: return sNetW;
             case ROLE_CARRIER: return sCarrierW;
+            case ROLE_SPEED: return sSpeedW;
             case ROLE_BATTERY: return sBatteryW;
             case ROLE_MARK: return sMarkW;
             case ROLE_HOLLOW: return sHollowW;
@@ -1714,6 +1764,7 @@ public final class Core {
             sDateW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_date", DEFAULT_DATE);
             sIslandW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_island", DEFAULT_ISLAND);
             sOtherW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_other", DEFAULT_OTHER);
+            sSpeedW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_speed", DEFAULT_SPEED);
             sFamily = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_family", DEFAULT_FAMILY) != 0;
             sG1 = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_g1", DEFAULT_G1) != 0;
             sGlobalW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_global", DEFAULT_GLOBAL);
@@ -1744,6 +1795,7 @@ public final class Core {
             sDateW = intOf(all, "date", sDateW);
             sIslandW = intOf(all, "island", sIslandW);
             sOtherW = intOf(all, "other", sOtherW);
+            sSpeedW = intOf(all, "speed", sSpeedW);
             sFamily = intOf(all, "family", sFamily ? 1 : 0) != 0;
             sG1 = intOf(all, "g1", sG1 ? 1 : 0) != 0;
             sGlobalW = intOf(all, "global", sGlobalW);

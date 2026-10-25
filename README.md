@@ -18,6 +18,7 @@
 在 HyperOS 上通过主题的方式应用一个第三方可变字体（带 `wght` 轴的 .ttf/.otf）之后，正文确实换成了新字体，但系统状态栏的字会明显变细，常见具体表现：
 
 - 状态栏时间、电量数字、4G/5G 标签、锁屏状态栏运营商名 —— 全比原生MiSans VF细；
+- 状态栏网速指示器（数字 + `KB/s` 单位）—— 原生在这一处要的是 `mipro-bold`（900），换字体之后这个数字同样会丢掉，只剩下系统合成出来的伪粗体，粗细都不对；
 
 HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它换掉的只是 Typeface 实例里的可变轴取值。
 
@@ -47,7 +48,7 @@ HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它
 
 前置条件：已 root，装了 LSPosed（或 libxposed 系框架，如 LSPosed 的 modern API 分支）。**不需要**元模块、不需要 Font Loader、不读写系统分区。
 
-1. 安装 `HyperFontFix-v1.0-alpha.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
+1. 安装 `HyperFontFix-v1.1.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
 2. 打开 LSPosed → 模块 → 启用 HyperFontFix，作用域只勾 **System UI（`com.android.systemui`）**（模块自带 scope 声明，正常只会列出这一个）；
 3. **重启一次SystemUI**。这是唯一必须重启的一步：注入只发生在进程启动时；
 4. 之后在主题商店应用你的第三方可变字体，状态栏那几处应该已经回到原生观感；
@@ -55,7 +56,7 @@ HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它
 
 ```bash
 adb logcat -s HyperFontFix | head
-# 期望看到：v1.0-alpha PER-ROLE installed, hooks=... clock=500 net=660 carrier=430 ...
+# 期望看到：v1.1 PER-ROLE installed, hooks=... clock=500 net=660 carrier=430 ... speed=900
 ```
 
 没有这一行就是没注入成功，回去检查作用域和模块开关；有这一行但某处还是偏细，跳到 §3.7 排查。
@@ -86,6 +87,7 @@ adb shell settings put  system hf_ff_enable 0       # 临时整体停用（hook 
 | `hf_ff_battery` | `500` | 电量数字 | 按实例身份识别，不牵连别处的充电文字 |
 | `hf_ff_mark` | `600` | 电量的 `%` 号 | 与电量数字是两个不同 TextView |
 | `hf_ff_hollow` | `620` | 镂空电池图标内的数字 | `MiuiBatteryUtils.FONT_WGHT` |
+| `hf_ff_speed` | `900` | 状态栏网速指示器（数字 + 单位） | ROM 原值 `mipro-bold` → 900，会夹到你字体 `fvar` 的上限 |
 | `hf_ff_date` | `0` | 控制中心 / 通知中心 / 锁屏日期 | **默认 0：完全不碰**（详见 §1.1：这块原本压根不受主题字体影响） |
 | `hf_ff_island` | `0` | 超级岛**胶囊形态**的文字 | **默认 0：完全不碰**；展开态本来就不受影响 |
 | `hf_ff_other` | `0` | 其它流经 `applyStatusBarTypeface` 但没归类的文字 | **默认 0：完全不碰** |
@@ -128,6 +130,9 @@ adb shell settings put system hf_ff_date 500
 # 超级岛胶囊态的文字也加粗
 adb shell settings put system hf_ff_island 600
 
+# 网速指示器嫌重就往下调（它原生要 900，小字号下 700 往往更耐看）
+adb shell settings put system hf_ff_speed 700
+
 # 一键回到「状态栏全部加粗」的观感
 adb shell settings put system hf_ff_all 660
 
@@ -137,7 +142,7 @@ adb shell settings put system hf_ff_family 0
 adb shell settings put system hf_ff_g1 0
 
 # 全部恢复默认
-adb shell "for k in enable clock network carrier battery mark hollow date island other global family g1 all log aod; do settings delete system hf_ff_$k; done"
+adb shell "for k in enable clock network carrier battery mark hollow speed date island other global family g1 all log aod; do settings delete system hf_ff_$k; done"
 ```
 
 ### 3.7 排查：某个控件还是偏细怎么办
@@ -149,10 +154,11 @@ adb logcat -s HyperFontFix
 
 | 日志行 | 说明 |
 | ---- | ---- |
-| `v1.0-alpha PER-ROLE installed, hooks=N clock=... net=...` | 注入成功 + 当前全部配置快照。**没有这一行 = 模块根本没进 SystemUI**，先去 LSPosed 查作用域 |
+| `v1.1 PER-ROLE installed, hooks=N clock=... net=... speed=...` | 注入成功 + 当前全部配置快照。**没有这一行 = 模块根本没进 SystemUI**，先去 LSPosed 查作用域 |
 | `SELFTEST file=... AXIS_TF=true AXIS_PAINT=false` | 三条写入通道的自证结果，判断「是不是字体文件路径没找到」 |
 | `T11 face 660 -> XxxView` | 绘制期确实给这个控件换上了 Typeface |
 | `T11 face refused XxxView` | 当前字体含 `HVAR`/`MVAR`，绘制期覆写自动跳过（防重排） |
+| `id-role speed for @network_speed_number` | 类名零线索的控件靠资源名 / 父链认领成功（运营商同理） |
 | `T11DIAG role=... @类名 want= ourtf= tvaxis= paint= layout=` | 单控件全链路读数：分不清「没命中」还是「没生效」时看这条 |
 | `T11SEEN 类名 id=资源名` | 我们**故意不碰**的文字（角色权重为 0）。还是偏细的那个控件十有八九在这里，按它的角色开对应的键 |
 | `SKIP 类名 role=...` | 明确跳过记录 |
@@ -214,17 +220,19 @@ lrwxrwxrwx Roboto-Light.ttf   -> /data/system/theme/fonts/Roboto-Regular.ttf
 
 ### 5.1 字重来源：一律抄 ROM 自己的作业
 
-默认值不是审美决定，而是 ROM 在这个位置的原始取值（从字节码调用点扫出来的）：时钟 500（pad 版 460）、4G/5G 660（`MobileTypeDrawable.<clinit>` 烘 `sMiproTypeface` 用的就是 `'wght' 660`）、运营商 430、电量数字 500、`%` 600、镂空电池 620（`MiuiBatteryUtils.FONT_WGHT`）。**日期 / 超级岛 / 未分类文字默认 0 = 完全不动。**
+默认值不是审美决定，而是 ROM 在这个位置的原始取值（从字节码调用点扫出来的）：时钟 500（pad 版 460）、4G/5G 660（`MobileTypeDrawable.<clinit>` 烘 `sMiproTypeface` 用的就是 `'wght' 660`）、运营商 430、电量数字 500、`%` 600、镂空电池 620（`MiuiBatteryUtils.FONT_WGHT`）、网速指示器 900。**日期 / 超级岛 / 未分类文字默认 0 = 完全不动。**
+
+网速指示器这一处的证据稍微特殊，因为它压根不经过 `MiuiConfigs`：`res/layout/network_speed.xml` 里的两个 TextView 只吃 `style/TextAppearance.StatusBar.NetWorkSpeedNumber`（`0x7f1506c2`）与 `...NetWorkSpeedUnit`（`0x7f1506c3`），两个样式都只声明 `fontFamily="mipro-bold"` + `textStyle=bold`，而 `/system/etc/fonts.xml` 把 `mipro-bold` 映射到 `sans-serif weight=900` —— 900 就是 ROM 在这里的字面请求值，也是本模块 `hf_ff_speed` 的默认值。它走的是「别名」而不是烘好的 Typeface，主题字体下别名只剩一个家族名、数字全部丢失，`textStyle=bold` 则退化成系统自己补的伪粗体；模块仍然用同一条通道修它：绘制期换成从当前字体文件重新烘出来的真轴实例，同时关掉伪粗体。
 
 ### 5.2 先命中，再改重
 
-模块内把系统栏文字归成角色：`clock / network / carrier / battery / mark / hollow / date / island / other`，每个角色一个字重键。命中一个控件有三条路，按可靠性从高到低：
+模块内把系统栏文字归成角色：`clock / network / carrier / battery / mark / hollow / speed / date / island / other`，每个角色一个字重键。命中一个控件有三条路，按可靠性从高到低：
 
 | 识别方式 | 用在哪 | 为什么需要 |
 |---|---|---|
 | 实例身份（反射拿字段） | 电量数字 vs `%` | 它们是**两个不同 TextView**，用文案正则匹配会把超级岛里的充电通知文字一起加粗 |
 | 类名 `classify()` | 时钟 / 运营商 / 日期 / 网络类型 | 便宜，可按类缓存，覆盖大部分场景 |
-| 资源 entry 名 + 父链容器 | 锁屏状态栏运营商 | 真正写字的是普通 `android.widget.TextView`，类名零线索；靠 `id/carrier_text` 与「位于 carrier 容器内」判定，顺带把同块的 `hd_text`、`plus_text` 一起纳管 |
+| 资源 entry 名 + 父链容器 | 锁屏状态栏运营商 / 状态栏网速指示器 | 真正写字的是普通 `android.widget.TextView`，类名零线索：运营商靠 `id/carrier_text` 与「位于 carrier 容器内」判定，顺带把同块的 `hd_text`、`plus_text` 一起纳管；网速指示器是同一套形状 —— `NetworkSpeedView`（LinearLayout）里的 `id/network_speed_number` 与 `id/network_speed_unit`，父链走到 `networkspeed` 即认领 |
 
 反向还有一层否决：`island / capsule / deepspace` 等类名与父链匹配的一律排除；日期与超级岛属于「权重 > 0 才解锁」的显式开关，默认绝不触碰。
 
@@ -247,7 +255,7 @@ lrwxrwxrwx Roboto-Light.ttf   -> /data/system/theme/fonts/Roboto-Regular.ttf
 
 ### 5.5 爆炸半径：白名单，而不是「全进程」
 
-- 绘制期改写只放行状态栏 / 面板 chrome 的包名，外加 `carrier` 角色；
+- 绘制期改写只放行状态栏 / 面板 chrome 的包名，外加 `carrier` / `speed` 两个角色（它们的角色只可能来自写明 carrier / network-speed 的类名或资源名，放开也不会溢出到钟面）；
 - **锁屏钟面永远不改**：`com.miui.clock.*`、`com.android.keyguard.clock.*`、`com.android.systemui.customization.clocks.*` 的类名同样含 "clock"，但它们自己就在做 `wght` 轴动画（`DigitalClockTextView$AxisAnimation`、`ClockAxisStyle`），写进去等于制造新 bug；
 - 进程级 Typeface 重写（`Typeface.create(String,int)` / `Builder.build()` / `getMiProTypefaceWght460`）**默认关闭**，即便打开也要过「调用方角色」这一关。
 
@@ -262,8 +270,8 @@ lrwxrwxrwx Roboto-Light.ttf   -> /data/system/theme/fonts/Roboto-Regular.ttf
 不用 Gradle：`tools/build_v4.ps1`（PowerShell + 本地 JDK）完成 javac → r8 → aapt2 → zip 塞入 → apksig 签名 → 校验，一条命令：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\build_v4.ps1 -Ver 1.0-alpha
-# 产物：HyperFontFix-v1.0-alpha.apk
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\build_v4.ps1 -Ver 1.1
+# 产物：HyperFontFix-v1.1.apk
 ```
 
 脚本按仓库相对路径推导工作目录，但工具链**不入库**（体积 / 许可原因），需要自备并放到约定位置：
