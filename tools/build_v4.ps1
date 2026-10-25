@@ -102,15 +102,36 @@ foreach ($n in @("module.prop", "java_init.list", "scope.list")) {
 $z.Dispose()
 "staged"
 
-# The signer helper ships as source; compile it if the (git-ignored) classes dir is gone.
-if (-not (Test-Path "$signc\SignApk.class")) {
+# The three helpers ship as source; compile them if the (git-ignored) classes dir
+# is gone or any of them is out of date.
+$helpers = @("SignApk", "AlignApk", "VerifyApk")
+$need = $false
+foreach ($h in $helpers) { if (-not (Test-Path "$signc\$h.class")) { $need = $true } }
+if ($need) {
     New-Item -ItemType Directory -Force -Path "$signc" | Out-Null
-    & "$jdk\javac.exe" -nowarn -classpath $apksig -d "$signc" "$root\tools\signsrc\SignApk.java"
-    if ($LASTEXITCODE -ne 0) { throw "SignApk compile failed" }
+    & "$jdk\javac.exe" -nowarn -classpath $apksig -d "$signc" `
+        "$root\tools\signsrc\SignApk.java" "$root\tools\signsrc\AlignApk.java" `
+        "$root\tools\signsrc\VerifyApk.java"
+    if ($LASTEXITCODE -ne 0) { throw "helper compile failed" }
 }
 
+# Align BEFORE signing. From Android 11 on an APK whose resources.arsc is not stored
+# uncompressed and aligned on a 4-byte boundary is refused with
+# INSTALL_PARSE_FAILED_RESOURCES_ARSC_COMPRESSED = -124, which HyperOS shows as
+# "package incompatible with your system". Not theoretical: v1.1 shipped an unaligned
+# ARSC only because versionName got 7 bytes shorter, and only devices whose PMS checks
+# are patched could install it. apksig appends the signing block behind the last
+# entry, so anything that moves entry offsets must happen before signing.
+$aligned = "$mod\build\aligned.apk"
+& $java -cp "$signc" AlignApk "$mod\build\final-unsigned.apk" $aligned
+if ($LASTEXITCODE -ne 0) { throw "align failed" }
+
 Remove-Item -Force $out -ErrorAction SilentlyContinue
-& $java -cp "$apksig;$signc" SignApk "$mod\build\final-unsigned.apk" $out $ks hf android
+& $java -cp "$apksig;$signc" SignApk $aligned $out $ks hf android
 if ($LASTEXITCODE -ne 0) { throw "sign failed" }
+# Alignment moved local header offsets, so re-verify the signature on the final file
+# instead of trusting that apksig and AlignApk agree about the zip layout.
+& $java -cp "$apksig;$signc" VerifyApk $out
+if ($LASTEXITCODE -ne 0) { throw "signature verification failed" }
 if ($py) { & $py "$root\tools\verify_v4.py" $out } else { "verify skipped (no python on PATH)" }
 "DONE $out"

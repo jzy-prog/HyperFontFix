@@ -267,7 +267,7 @@ lrwxrwxrwx Roboto-Light.ttf   -> /data/system/theme/fonts/Roboto-Regular.ttf
 
 ## 7. 自己构建
 
-不用 Gradle：`tools/build_v4.ps1`（PowerShell + 本地 JDK）完成 javac → r8 → aapt2 → zip 塞入 → apksig 签名 → 校验，一条命令：
+不用 Gradle：`tools/build_v4.ps1`（PowerShell + 本地 JDK）完成 javac → r8 → aapt2 → zip 塞入 → **resources.arsc 对齐** → apksig 签名 → 签名校验 + 结构自检，一条命令：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\build_v4.ps1 -Ver 1.1
@@ -288,6 +288,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\build_v4.ps1 -Ver 1.1
 | 签名密钥 | `tools/debug.keystore`（alias `hf`） | 自带的是 debug key，自行发布请换成自己的 |
 
 `module/` 下只有三个源文件（`Core.java` 是全部逻辑）、唯一的 manifest 和 `assets/xposed_init`；`META-INF/xposed/{module.prop,java_init.list,scope.list}` 由脚本生成，作用域固定 `com.android.systemui`。
+
+**`tools/signsrc/AlignApk.java` 那一步不能省，也不要指望去掉。** 从 Android 11 起，只要 `targetSdk >= 30`，包里 `resources.arsc` 若不是「未压缩 + 起始偏移 4 字节对齐」，安装阶段就直接判死：`INSTALL_PARSE_FAILED_RESOURCES_ARSC_COMPRESSED = -124`，HyperOS 的文案是「该安装包与您的系统不兼容」。这一步做的事情和 `zipalign` 一样 —— 把每个条目本地头的 `extra` 字段加长到对齐边界，条目内容一个字节都不动 —— 只是不需要多带一个 SDK 工具；而且**必须排在签名之前**，签名块是插在最后一个条目之后的，签完再动偏移等于把签名作废。
+
+这一步是 v1.1 现场补上的：之前 `resources.arsc` 恰好落在对齐位置（纯属运气），版本号从 `1.0-alpha` 缩成 `1.1` 之后清单短了 7 字节，arsc 跟着错开 7 字节，干净系统的安装全挂。`tools/verify_v4.py` 现在每次构建都会打印 arsc 的偏移与 `mod 4`，这条不变量从此可看见。
 
 ## 8. 许可
 
