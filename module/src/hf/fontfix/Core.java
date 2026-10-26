@@ -76,6 +76,13 @@ public final class Core {
     private static final int ROLE_OTHER = 7;
     /** Status-bar network speed indicator: its number and its unit. */
     private static final int ROLE_SPEED = 9;
+    /**
+     * Alarm countdown that takes over the carrier slot on the keyguard status bar.
+     * It is an android.widget.Chronometer, so classify() alone cannot separate it
+     * from the elapsed-time clocks and calls it ROLE_DATE - which is why this label
+     * stayed thin while its carrier neighbour got fixed.
+     */
+    private static final int ROLE_ALARM = 10;
 
     /**
      * Class-name patterns that are NOT status-bar text and must keep their own
@@ -156,6 +163,16 @@ public final class Core {
      * font can actually do, so a font topping out at 700 lands on 700.
      */
     static final int DEFAULT_SPEED = 900;
+    /**
+     * 500, asked for twice by the ROM itself:
+     *   1) res/layout/keyguard_status_bar.xml line 85, the Chronometer that carries
+     *      @id/alarm_display declares android:fontVariationSettings="'wght' 500";
+     *   2) MiuiKeyguardStatusBarView (updateResources + onMiuiThemeChanged) hands
+     *      mAlarmText to MiuiConfigs.applyStatusBarTypeface(sMiproTypefaceWght500, ..).
+     * Same baked slot as the clock and the battery digits, so nothing here is new:
+     * only the view was missing from our role list.
+     */
+    static final int DEFAULT_ALARM = 500;
     /** com.miui.aod is out of scope now; hf_ff_aod=1 re-enables it for experiments. */
     static final int DEFAULT_AOD = 0;
     /**
@@ -193,6 +210,7 @@ public final class Core {
     private static volatile int sIslandW = DEFAULT_ISLAND;
     private static volatile int sOtherW = DEFAULT_OTHER;
     private static volatile int sSpeedW = DEFAULT_SPEED;
+    private static volatile int sAlarmW = DEFAULT_ALARM;
     /** 1 = let H0a/H0b/H0c rewrite mipro-* family resolution process-wide (off default). */
     private static volatile boolean sFamily = DEFAULT_FAMILY != 0;
     /** 1 = let G1 rewrite MiuiConfigs.getMiProTypefaceWght460 for every caller. */
@@ -590,7 +608,22 @@ public final class Core {
                             // PER INSTANCE (the parent-chain walk is the expensive part)
                             // and remember the verdict, so a capsule widget can never be
                             // pinned as something else by its class name alone.
-                            role = viewExcluded(tv) ? Integer.valueOf(ROLE_ISLAND) : cached;
+                            int idr2 = ROLE_NONE;
+                            if (cached.intValue() == ROLE_DATE) {
+                                // android.widget.Chronometer is TWO widgets here: the
+                                // elapsed-time clocks nobody asked about, and the alarm
+                                // countdown that takes over the carrier slot on the lock
+                                // screen (id/alarm_display, ROM weight 500). Identical
+                                // class name, so a DATE verdict only sticks after the
+                                // resource id has failed to claim it.
+                                idr2 = roleFromResourceId(tv);
+                            }
+                            if (idr2 != ROLE_NONE) {
+                                role = Integer.valueOf(viewExcluded(tv) ? ROLE_ISLAND : idr2);
+                            } else {
+                                role = viewExcluded(tv)
+                                        ? Integer.valueOf(ROLE_ISLAND) : cached;
+                            }
                             sRoles.put(tv, role);
                         }
                     }
@@ -645,11 +678,12 @@ public final class Core {
         } catch (Throwable t) { log("T12 fail: " + t); }
 
         refreshCfg();
-        log("v1.1 PER-ROLE installed, hooks=" + n
+        log("v1.2 PER-ROLE installed, hooks=" + n
                 + " clock=" + sClockW + " net=" + sNetW + " carrier=" + sCarrierW
                 + " batt=" + sBatteryW + " mark=" + sMarkW + " hollow=" + sHollowW
                 + " date=" + sDateW + " island=" + sIslandW + " other=" + sOtherW
                 + " speed=" + sSpeedW
+                + " alarm=" + sAlarmW
                 + " family=" + (sFamily ? 1 : 0) + " g1=" + (sG1 ? 1 : 0)
                 + " global=" + sGlobalW + " all=" + sAll
                 + " aod=" + (sAod ? 1 : 0)
@@ -719,13 +753,14 @@ public final class Core {
             new java.util.concurrent.ConcurrentHashMap<String, Boolean>();
 
     private static boolean drawFaceAllowed(TextView tv, int role) {
-        // Carrier labels win outright: the role can only have come from a class name
-        // or a resource entry name that SAYS "carrier", and the lock-screen label is
-        // a plain android.widget.TextView with id=carrier_text, i.e. a class the
-        // package list below could never recognise. The speed indicator is the same
-        // story (id/network_speed_number|_unit); both roles can only have been
-        // earned from a carrier/speed class name or a carrier/speed entry name.
-        if (role == ROLE_CARRIER || role == ROLE_SPEED) return true;
+        // These roles win outright: the role can only have come from a class name
+        // or a resource entry name that says carrier / network-speed / alarm_display,
+        // and the views are plain android.widget.TextView or android.widget.Chronometer
+        // (id=carrier_text, id/network_speed_number|_unit, id/alarm_display), i.e.
+        // classes the package list below could never recognise. The alarm countdown
+        // is a Chronometer, so without this draw-time gate it would be allowed only
+        // by coincidence of a class name and then stamped by an inapplicable weight.
+        if (role == ROLE_CARRIER || role == ROLE_SPEED || role == ROLE_ALARM) return true;
         String n = tv.getClass().getName();
         Boolean known = sDrawFaceOk.get(n);
         if (known != null) {
@@ -1312,6 +1347,15 @@ public final class Core {
         // name for those, but weaker than the identity tag above.
         if (tf != null && sMcBattery.contains(tf)) return ROLE_BATTERY;
         int c = classify(tv.getClass().getName());
+        if (c == ROLE_DATE) {
+            // The alarm countdown in the carrier slot is a Chronometer too, and the
+            // ROM feeds it through this very method with sMiproTypefaceWght500. Let
+            // the instance signals settle it before the class name calls it a date.
+            if (inCarrierChip(tv)) return ROLE_CARRIER;
+            if (inSpeedChip(tv)) return ROLE_SPEED;
+            int byId = roleFromResourceId(tv);
+            if (byId != ROLE_NONE) return byId;
+        }
         if (c != ROLE_NONE) return c;
         // Operator name / "HD" / "+" are plain TextViews inside a carrier container:
         // without this they fall through to ROLE_OTHER (weight 0) and the whole
@@ -1418,6 +1462,10 @@ public final class Core {
             String ln = n == null ? null : n.toLowerCase();
             if (ln != null && ln.indexOf("carrier") >= 0) r = ROLE_CARRIER;
             else if (ln != null && ln.indexOf("network_speed") >= 0) r = ROLE_SPEED;
+            // Full name, not a substring: "alarm" alone would also catch
+            // id/dream_overlay_alarm_set and id/zen_alarm_warning, which are not the
+            // keyguard status bar and never asked for 500.
+            else if (ln != null && ln.indexOf("alarm_display") >= 0) r = ROLE_ALARM;
         } catch (Throwable ignored) { }
         sIdRoles.put(Integer.valueOf(id), Integer.valueOf(r));
         if (r != ROLE_NONE) logOnce("idrole:" + id, "id-role " + roleName(r) + " for @" + n);
@@ -1452,6 +1500,7 @@ public final class Core {
             case ROLE_CARRIER: return "carrier";
             case ROLE_BATTERY: return "battery";
             case ROLE_SPEED: return "speed";
+            case ROLE_ALARM: return "alarm";
             case ROLE_MARK: return "mark";
             case ROLE_HOLLOW: return "hollow";
             case ROLE_DATE: return "date";
@@ -1537,6 +1586,7 @@ public final class Core {
             case ROLE_NET: return sNetW;
             case ROLE_CARRIER: return sCarrierW;
             case ROLE_SPEED: return sSpeedW;
+            case ROLE_ALARM: return sAlarmW;
             case ROLE_BATTERY: return sBatteryW;
             case ROLE_MARK: return sMarkW;
             case ROLE_HOLLOW: return sHollowW;
@@ -1765,6 +1815,7 @@ public final class Core {
             sIslandW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_island", DEFAULT_ISLAND);
             sOtherW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_other", DEFAULT_OTHER);
             sSpeedW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_speed", DEFAULT_SPEED);
+            sAlarmW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_alarm", DEFAULT_ALARM);
             sFamily = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_family", DEFAULT_FAMILY) != 0;
             sG1 = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_g1", DEFAULT_G1) != 0;
             sGlobalW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_global", DEFAULT_GLOBAL);
@@ -1796,6 +1847,7 @@ public final class Core {
             sIslandW = intOf(all, "island", sIslandW);
             sOtherW = intOf(all, "other", sOtherW);
             sSpeedW = intOf(all, "speed", sSpeedW);
+            sAlarmW = intOf(all, "alarm", sAlarmW);
             sFamily = intOf(all, "family", sFamily ? 1 : 0) != 0;
             sG1 = intOf(all, "g1", sG1 ? 1 : 0) != 0;
             sGlobalW = intOf(all, "global", sGlobalW);
