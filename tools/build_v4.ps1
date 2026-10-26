@@ -1,11 +1,11 @@
 # Build HyperFontFix v4.0 without Gradle/Android Studio.
 # stubs -> javac -> r8 -> aapt2 link -> zip stage -> apksig sign -> verify.
 # Kept under its v4 name so the previously approved command line keeps working;
-# the output version is now a parameter (default 1.2).
+# the output version is now a parameter (default 1.3).
 # Two params, ONE block: PowerShell allows param() only as the first statement.
 #   -Ver  versionName to stamp into the APK
 #   -Root optional project root; default = parent of tools/ so a clean clone builds.
-param([string]$Ver = "1.2", [string]$Root = "")
+param([string]$Ver = "1.3", [string]$Root = "")
 $ErrorActionPreference = "stop"
 $root   = if ($Root) { $Root } else { Split-Path -Parent $PSScriptRoot }
 $mod    = "$root\module"

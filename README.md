@@ -49,7 +49,7 @@ HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它
 
 前置条件：已 root，装了 LSPosed（或 libxposed 系框架，如 LSPosed 的 modern API 分支）。**不需要**元模块、不需要 Font Loader、不读写系统分区。
 
-1. 安装 `HyperFontFix-v1.2.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
+1. 安装 `HyperFontFix-v1.3.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
 2. 打开 LSPosed → 模块 → 启用 HyperFontFix，作用域只勾 **System UI（`com.android.systemui`）**（模块自带 scope 声明，正常只会列出这一个）；
 3. **重启一次SystemUI**。这是唯一必须重启的一步：注入只发生在进程启动时；
 4. 之后在主题商店应用你的第三方可变字体，状态栏那几处应该已经回到原生观感；
@@ -57,7 +57,7 @@ HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它
 
 ```bash
 adb logcat -s HyperFontFix | head
-# 期望看到：v1.2 PER-ROLE installed, hooks=... clock=500 net=660 carrier=430 ... speed=900 alarm=500
+# 期望看到：v1.3 PER-ROLE installed, hooks=... clock=500 net=660 carrier=430 ... speed=900 alarm=500 lockdate=0
 ```
 
 没有这一行就是没注入成功，回去检查作用域和模块开关；有这一行但某处还是偏细，跳到 §3.7 排查。
@@ -90,7 +90,8 @@ adb shell settings put  system hf_ff_enable 0       # 临时整体停用（hook 
 | `hf_ff_hollow` | `620` | 镂空电池图标内的数字 | `MiuiBatteryUtils.FONT_WGHT` |
 | `hf_ff_speed` | `900` | 状态栏网速指示器（数字 + 单位） | ROM 原值 `mipro-bold` → 900，会夹到你字体 `fvar` 的上限 |
 | `hf_ff_alarm` | `500` | 锁屏状态栏的闹钟倒计时（占用运营商位的那块文字） | ROM 原值：布局自带 `'wght' 500` + `sMiproTypefaceWght500` |
-| `hf_ff_date` | `0` | 控制中心 / 通知中心 / 锁屏日期 | **默认 0：完全不碰**（详见 §1.1：这块原本压根不受主题字体影响） |
+| `hf_ff_lockdate` | `0` | **锁屏**日期与农历行 | **默认 0：完全不碰**；要开就填 `400`（= ROM 原值，见 §5.6） |
+| `hf_ff_date` | `0` | 控制中心 / 通知中心日期 | **默认 0：完全不碰**（详见 §1.1：这块原本压根不受主题字体影响） |
 | `hf_ff_island` | `0` | 超级岛**胶囊形态**的文字 | **默认 0：完全不碰**；展开态本来就不受影响 |
 | `hf_ff_other` | `0` | 其它流经 `applyStatusBarTypeface` 但没归类的文字 | **默认 0：完全不碰** |
 | `hf_ff_global` | `460` | `getMiProTypefaceWght460()` 的名义字重 | 只在 `hf_ff_g1` 或 `hf_ff_all` 打开时参与 |
@@ -138,6 +139,10 @@ adb shell settings put system hf_ff_speed 700
 # 锁屏闹钟倒计时（默认 500 = 原生）嫌重就调细，0 = 完全不动它
 adb shell settings put system hf_ff_alarm 430
 
+# 只想动锁屏日期：先把其它角色全关掉，再单独打开这一个（见 §5.6）
+adb shell "for k in clock network carrier battery mark hollow speed alarm; do settings put system hf_ff_$k 0; done"
+adb shell settings put system hf_ff_lockdate 400
+
 # 一键回到「状态栏全部加粗」的观感
 adb shell settings put system hf_ff_all 660
 
@@ -147,7 +152,7 @@ adb shell settings put system hf_ff_family 0
 adb shell settings put system hf_ff_g1 0
 
 # 全部恢复默认
-adb shell "for k in enable clock network carrier battery mark hollow speed alarm date island other global family g1 all log aod; do settings delete system hf_ff_$k; done"
+adb shell "for k in enable clock network carrier battery mark hollow speed alarm lockdate date island other global family g1 all log aod; do settings delete system hf_ff_$k; done"
 ```
 
 ### 3.7 排查：某个控件还是偏细怎么办
@@ -233,13 +238,13 @@ lrwxrwxrwx Roboto-Light.ttf   -> /data/system/theme/fonts/Roboto-Regular.ttf
 
 ### 5.2 先命中，再改重
 
-模块内把系统栏文字归成角色：`clock / network / carrier / battery / mark / hollow / speed / alarm / date / island / other`，每个角色一个字重键。命中一个控件有三条路，按可靠性从高到低：
+模块内把系统栏文字归成角色：`clock / network / carrier / battery / mark / hollow / speed / alarm / lockdate / date / island / other`，每个角色一个字重键。命中一个控件有三条路，按可靠性从高到低：
 
 | 识别方式 | 用在哪 | 为什么需要 |
 |---|---|---|
 | 实例身份（反射拿字段） | 电量数字 vs `%` | 它们是**两个不同 TextView**，用文案正则匹配会把超级岛里的充电通知文字一起加粗 |
 | 类名 `classify()` | 时钟 / 运营商 / 日期 / 网络类型 | 便宜，可按类缓存，覆盖大部分场景 |
-| 资源 entry 名 + 父链容器 | 锁屏状态栏运营商 / 状态栏网速指示器 / 锁屏闹钟倒计时 | 真正写字的是普通 `android.widget.TextView`，类名零线索：运营商靠 `id/carrier_text` 与「位于 carrier 容器内」判定，顺带把同块的 `hd_text`、`plus_text` 一起纳管；网速指示器是同一套形状 —— `NetworkSpeedView`（LinearLayout）里的 `id/network_speed_number` 与 `id/network_speed_unit`，父链走到 `networkspeed` 即认领；闹钟倒计时反过来 —— 类名 `Chronometer` 会被日期规则吃掉，只能靠 `id/alarm_display` 从「日期」手里抢回来，所以用**全名**匹配，免得 `dream_overlay_alarm_set`、`zen_alarm_warning` 这些同样含 alarm 的 id 一起中招 |
+| 资源 entry 名 + 父链容器 | 锁屏状态栏运营商 / 状态栏网速指示器 / 锁屏闹钟倒计时 / 锁屏日期 | 真正写字的是普通 `android.widget.TextView`，类名零线索：运营商靠 `id/carrier_text` 与「位于 carrier 容器内」判定，顺带把同块的 `hd_text`、`plus_text` 一起纳管；网速指示器是同一套形状 —— `NetworkSpeedView`（LinearLayout）里的 `id/network_speed_number` 与 `id/network_speed_unit`，父链走到 `networkspeed` 即认领；闹钟倒计时反过来 —— 类名 `Chronometer` 会被日期规则吃掉，只能靠 `id/alarm_display` 从「日期」手里抢回来，所以用**全名**匹配，免得 `dream_overlay_alarm_set`、`zen_alarm_warning` 这些同样含 alarm 的 id 一起中招；锁屏日期要**两个条件同时成立**（entry 名含 `date` + 父链里出现钟面类），见 §5.6 |
 
 反向还有一层否决：`island / capsule / deepspace` 等类名与父链匹配的一律排除；日期与超级岛属于「权重 > 0 才解锁」的显式开关，默认绝不触碰。
 
@@ -262,23 +267,51 @@ lrwxrwxrwx Roboto-Light.ttf   -> /data/system/theme/fonts/Roboto-Regular.ttf
 
 ### 5.5 爆炸半径：白名单，而不是「全进程」
 
-- 绘制期改写只放行状态栏 / 面板 chrome 的包名，外加 `carrier` / `speed` / `alarm` 三个角色（它们的角色只可能来自写明 carrier / network-speed / alarm_display 的类名或资源名，放开也不会溢出到钟面）；
-- **锁屏钟面永远不改**：`com.miui.clock.*`、`com.android.keyguard.clock.*`、`com.android.systemui.customization.clocks.*` 的类名同样含 "clock"，但它们自己就在做 `wght` 轴动画（`DigitalClockTextView$AxisAnimation`、`ClockAxisStyle`），写进去等于制造新 bug；
+- 绘制期改写只放行状态栏 / 面板 chrome 的包名，外加 `carrier` / `speed` / `alarm` / `lockdate` 四个角色（它们的角色只可能来自写明 carrier / network-speed / alarm_display 的资源名，或「含 date 且位于钟面内」这一对条件，放开也不会溢出到别处）；
+- **锁屏钟面默认不改**：`com.miui.clock.*`、`com.android.keyguard.clock.*`、`com.android.systemui.customization.clocks.*` 的类名同样含 "clock"，但它们自己就在做 `wght` 轴动画（`DigitalClockTextView$AxisAnimation`、`ClockAxisStyle`），写进去等于制造新 bug。唯一例外是 `hf_ff_lockdate`：它 > 0 时只把**日期与农历两行**放出来，钟面数字照样不碰（§5.6）；
 - 进程级 Typeface 重写（`Typeface.create(String,int)` / `Builder.build()` / `getMiProTypefaceWght460`）**默认关闭**，即便打开也要过「调用方角色」这一关。
+
+### 5.6 锁屏日期：唯一需要显式解锁的控件
+
+这块文字不是没人管，而是 ROM 自己每次锁屏都会重写它 —— `com.miui.clock.MiuiBaseClock.setTextFontDark(boolean)`：
+
+```java
+Typeface t  = Typeface.create("mipro-regular", 0);   // 普通态
+Typeface tm = Typeface.create("mipro-medium",  0);   // 需要深色文字时（浅色壁纸）
+mCurrentDate.setTypeface(dark ? tm : t);
+mLunarCalendarInfo.setTypeface(dark ? tm : t);       // 农历行，和日期同一个 Typeface
+```
+
+有意思的是 `mipro-regular` **在 ROM 自己的字体配置里是注释掉的**：
+
+```xml
+<!-- <alias name="mipro-regular" to="sans-serif" weight="400" /> -->
+<alias name="mipro-medium" to="sans-serif" weight="500" />
+```
+
+所以普通态那个请求落不到别名上，实际就是默认家族的 regular（**400**）；深色态的 `mipro-medium` 是活的，**500**。控件本身又是普通 `android.widget.TextView`（`res/layout/miui_left_top_clock.xml` 里的 `@id/current_date`，`android:fontFamily="mipro-regular"`；其它钟面样式是 `id/oversize_b_date`、`id/pad_c_date`、`id/vertical_data_upper_view_date` …），类名一点线索都没有。
+
+而 `Typeface.create(String,int)` 正好就是那条进程级通道（`hf_ff_family`）—— 早期版本一开全局重写，锁屏日期立刻跟着换成主题字体（§1.1 那个「奇效」），代价是别的东西也被一起改掉。现在把它单独做成 `hf_ff_lockdate`：
+
+- 认领条件 = 资源 entry 名含 `date` **且** 父链 6 层内出现 `com.miui.clock.*` / `com.android.keyguard.clock.*`，两个条件缺一不可，所以控制中心 / 通知中心的日期（归 `hf_ff_date`）不会被牵连；
+- 它是唯一能让钟面禁区放行的角色，而且只放行日期与农历两行，钟面数字照旧不碰；
+- 默认 `0`，行为与之前所有版本一致（完全不碰）。填 `400` 就是原生观感，代价见 §6 最后一条；
+- 打开后锁屏日期会改用主题字体：烘 Typeface 用的是当前主题字体文件，和 §5.3 的其它角色一样，只换笔画粗细不换字形。
 
 ## 6. 已知限制
 
 - 只在小米17 / HyperOS 4.0.0.32 Beta / Android 17 上实测过。角色识别靠类名与资源名，其它 ROM（尤其 OS2/OS3）的控件类名与写入点不同，需要重新核对才能确认覆盖。
 - 绘制期改写的前提是主题字体**没有** `HVAR`/`MVAR`（绝大多数第三方 VF 字体都没有）；如果你的字体带这两个表，模块会自动放弃绘制期覆写，此时偏细无法修复，因为改字重会改字宽。
 - 性能与功耗只做过代码层面的结构分析（无常驻线程轮询、稳态每帧只走缓存查表、不 `requestLayout`、不持 wakelock），**CPU 占用、帧时间、电流这些定量数字尚不明确**：没有实测过，也不拍脑袋给数字。
+- `hf_ff_lockdate` 只能供一个值，而 ROM 在浅色壁纸（需要深色文字）时会把日期换成 `mipro-medium` = 500：取 `400` 时深色态会比原生略细，取 `500` 时普通态会略粗，中间值自行折中。
 
 ## 7. 自己构建
 
 不用 Gradle：`tools/build_v4.ps1`（PowerShell + 本地 JDK）完成 javac → r8 → aapt2 → zip 塞入 → **resources.arsc 对齐** → apksig 签名 → 签名校验 + 结构自检，一条命令：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\build_v4.ps1 -Ver 1.2
-# 产物：HyperFontFix-v1.2.apk
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\build_v4.ps1 -Ver 1.3
+# 产物：HyperFontFix-v1.3.apk
 ```
 
 脚本按仓库相对路径推导工作目录，但工具链**不入库**（体积 / 许可原因），需要自备并放到约定位置：

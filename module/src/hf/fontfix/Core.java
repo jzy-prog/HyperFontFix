@@ -83,6 +83,23 @@ public final class Core {
      * stayed thin while its carrier neighbour got fixed.
      */
     private static final int ROLE_ALARM = 10;
+    /**
+     * Lock-screen date line under the keyguard clock. The clock faces own this text:
+     * com.miui.clock.MiuiBaseClock.setTextFontDark() writes mCurrentDate and
+     * mLunarCalendarInfo with Typeface.create("mipro-regular", 0), and with
+     * Typeface.create("mipro-medium", 0) when the wallpaper needs dark text. The
+     * first alias is COMMENTED OUT in the ROM's own font config
+     * (fonts/fonts_system.xml line 1034), so that request lands on the default family
+     * at its regular weight (400); mipro-medium does exist, line 1035, and is
+     * sans-serif at weight 500. Views: TextView@id/current_date
+     * (res/layout/miui_left_top_clock.xml line 25, android:fontFamily="mipro-regular")
+     * plus the per-style equivalents (id/oversize_b_date, id/pad_c_date,
+     * id/vertical_data_upper_view_date, ...).
+     * Default stays 0: these views sit inside the clock-face zoo that the draw-time
+     * ban has protected since v5.5, and some styles animate the date through Folme.
+     * hf_ff_lockdate > 0 both assigns this role and lifts the ban for it.
+     */
+    private static final int ROLE_LOCKDATE = 11;
 
     /**
      * Class-name patterns that are NOT status-bar text and must keep their own
@@ -173,6 +190,12 @@ public final class Core {
      * only the view was missing from our role list.
      */
     static final int DEFAULT_ALARM = 500;
+    /**
+     * 0 = leave the lock-screen date alone, which is what every version up to v1.2
+     * did. The ROM asks for regular (400), or 500 while the clock uses dark text, so
+     * 400 is the value that reproduces the stock look once a theme font is applied.
+     */
+    static final int DEFAULT_LOCKDATE = 0;
     /** com.miui.aod is out of scope now; hf_ff_aod=1 re-enables it for experiments. */
     static final int DEFAULT_AOD = 0;
     /**
@@ -211,6 +234,7 @@ public final class Core {
     private static volatile int sOtherW = DEFAULT_OTHER;
     private static volatile int sSpeedW = DEFAULT_SPEED;
     private static volatile int sAlarmW = DEFAULT_ALARM;
+    private static volatile int sLockDateW = DEFAULT_LOCKDATE;
     /** 1 = let H0a/H0b/H0c rewrite mipro-* family resolution process-wide (off default). */
     private static volatile boolean sFamily = DEFAULT_FAMILY != 0;
     /** 1 = let G1 rewrite MiuiConfigs.getMiProTypefaceWght460 for every caller. */
@@ -593,6 +617,7 @@ public final class Core {
                             // an id called "time".
                             int idr = inCarrierChip(tv) ? ROLE_CARRIER
                                     : (inSpeedChip(tv) ? ROLE_SPEED : roleFromResourceId(tv));
+                            if (idr == ROLE_NONE) idr = roleFromLockDate(tv);
                             if (idr == ROLE_NONE) {
                                 // Remember the negative verdict too: one parent-chain
                                 // walk and at most one id lookup per view, ever.
@@ -617,6 +642,7 @@ public final class Core {
                                 // class name, so a DATE verdict only sticks after the
                                 // resource id has failed to claim it.
                                 idr2 = roleFromResourceId(tv);
+                                if (idr2 == ROLE_NONE) idr2 = roleFromLockDate(tv);
                             }
                             if (idr2 != ROLE_NONE) {
                                 role = Integer.valueOf(viewExcluded(tv) ? ROLE_ISLAND : idr2);
@@ -678,12 +704,13 @@ public final class Core {
         } catch (Throwable t) { log("T12 fail: " + t); }
 
         refreshCfg();
-        log("v1.2 PER-ROLE installed, hooks=" + n
+        log("v1.3 PER-ROLE installed, hooks=" + n
                 + " clock=" + sClockW + " net=" + sNetW + " carrier=" + sCarrierW
                 + " batt=" + sBatteryW + " mark=" + sMarkW + " hollow=" + sHollowW
                 + " date=" + sDateW + " island=" + sIslandW + " other=" + sOtherW
                 + " speed=" + sSpeedW
                 + " alarm=" + sAlarmW
+                + " lockdate=" + sLockDateW
                 + " family=" + (sFamily ? 1 : 0) + " g1=" + (sG1 ? 1 : 0)
                 + " global=" + sGlobalW + " all=" + sAll
                 + " aod=" + (sAod ? 1 : 0)
@@ -761,6 +788,11 @@ public final class Core {
         // is a Chronometer, so without this draw-time gate it would be allowed only
         // by coincidence of a class name and then stamped by an inapplicable weight.
         if (role == ROLE_CARRIER || role == ROLE_SPEED || role == ROLE_ALARM) return true;
+        // The lock-screen date is a plain TextView inside a clock face, i.e. exactly
+        // the combination this guard exists to refuse. ROLE_LOCKDATE is only
+        // assignable while hf_ff_lockdate > 0, so arriving here means the user asked
+        // for that one view by name; nothing else can reach this branch.
+        if (role == ROLE_LOCKDATE) return true;
         String n = tv.getClass().getName();
         Boolean known = sDrawFaceOk.get(n);
         if (known != null) {
@@ -1354,6 +1386,7 @@ public final class Core {
             if (inCarrierChip(tv)) return ROLE_CARRIER;
             if (inSpeedChip(tv)) return ROLE_SPEED;
             int byId = roleFromResourceId(tv);
+            if (byId == ROLE_NONE) byId = roleFromLockDate(tv);
             if (byId != ROLE_NONE) return byId;
         }
         if (c != ROLE_NONE) return c;
@@ -1472,6 +1505,53 @@ public final class Core {
         return r;
     }
 
+    /**
+     * Is this view inside a lock-screen clock face? The faces are the only place with
+     * a date line the ROM feeds through Typeface.create("mipro-regular"), and they
+     * are referenced from layouts, so these two package prefixes survive whatever
+     * obfuscation the rest of the APK went through.
+     */
+    private static boolean inLockScreenClock(android.view.View v) {
+        try {
+            for (int i = 0; v != null && i < 6; i++) {
+                String n = v.getClass().getName().toLowerCase();
+                if (n.indexOf("miui.clock") >= 0 || n.indexOf("keyguard.clock") >= 0) return true;
+                Object p = v.getParent();
+                v = (p instanceof android.view.View) ? (android.view.View) p : null;
+            }
+        } catch (Throwable ignored) { }
+        return false;
+    }
+
+    /**
+     * Lock-screen date, opt-in only. Both signals are needed: a resource entry name
+     * that says "date" AND a clock face somewhere above it. The pair is cached per id
+     * because an id only ever appears in the layouts it belongs to. While
+     * hf_ff_lockdate is 0 we bail out before touching the cache, so turning the key
+     * on later still gets a fresh verdict.
+     */
+    private static final Map<Integer, Boolean> sLockDateIds =
+            new java.util.concurrent.ConcurrentHashMap<Integer, Boolean>();
+
+    private static int roleFromLockDate(TextView tv) {
+        if (sLockDateW <= 0) return ROLE_NONE;
+        int id;
+        try { id = tv.getId(); } catch (Throwable t) { return ROLE_NONE; }
+        if (id == 0) return ROLE_NONE;
+        Boolean known = sLockDateIds.get(Integer.valueOf(id));
+        if (known != null) return known.booleanValue() ? ROLE_LOCKDATE : ROLE_NONE;
+        boolean ok = false;
+        String n = null;
+        try {
+            n = tv.getResources().getResourceEntryName(id);
+            String ln = n == null ? null : n.toLowerCase();
+            ok = ln != null && ln.indexOf("date") >= 0 && inLockScreenClock(tv);
+        } catch (Throwable ignored) { }
+        sLockDateIds.put(Integer.valueOf(id), Boolean.valueOf(ok));
+        if (ok) logOnce("lockdate:" + id, "id-role " + roleName(ROLE_LOCKDATE) + " for @" + n);
+        return ok ? ROLE_LOCKDATE : ROLE_NONE;
+    }
+
     /** Should this view be left completely alone? Role 0/false for the disabled ones. */
     private static boolean roleExcluded(TextView tv) {
         if (tv == null) return false;
@@ -1501,6 +1581,7 @@ public final class Core {
             case ROLE_BATTERY: return "battery";
             case ROLE_SPEED: return "speed";
             case ROLE_ALARM: return "alarm";
+            case ROLE_LOCKDATE: return "lockdate";
             case ROLE_MARK: return "mark";
             case ROLE_HOLLOW: return "hollow";
             case ROLE_DATE: return "date";
@@ -1587,6 +1668,7 @@ public final class Core {
             case ROLE_CARRIER: return sCarrierW;
             case ROLE_SPEED: return sSpeedW;
             case ROLE_ALARM: return sAlarmW;
+            case ROLE_LOCKDATE: return sLockDateW;
             case ROLE_BATTERY: return sBatteryW;
             case ROLE_MARK: return sMarkW;
             case ROLE_HOLLOW: return sHollowW;
@@ -1796,10 +1878,34 @@ public final class Core {
         } catch (Throwable ignored) { }
     }
 
+    /**
+     * hf_ff_lockdate is the first role that ships switched OFF, and that has one
+     * consequence: while the key was 0 the draw hook stored a ROLE_NONE verdict per
+     * view (and skipped the id/parent probe entirely), and ROLE_NONE is never looked
+     * at again. Dropping only the negative verdicts on the 0 -> >0 transition keeps
+     * the "flip the key, live in two seconds" promise without touching the positive
+     * claims -- the per-instance battery tags in particular must survive.
+     */
+    private static void maybeDropLockDateVerdicts(int prev) {
+        if (sLockDateW <= 0 || prev > 0) return;
+        try {
+            synchronized (sRoles) {
+                java.util.Iterator<java.util.Map.Entry<View, Integer>> it =
+                        sRoles.entrySet().iterator();
+                while (it.hasNext()) {
+                    if (it.next().getValue().intValue() == ROLE_NONE) it.remove();
+                }
+            }
+        } catch (Throwable ignored) { }
+        sLockDateIds.clear();
+        log("lockdate enabled: unclaimed-view verdicts dropped");
+    }
+
     static void refreshCfg() {
         long now = System.currentTimeMillis();
         if (now - sCfgTs < 2000) return;
         sCfgTs = now;
+        int prevLockDateW = sLockDateW;
         Context c = sCtx;
         if (c == null) { ctxViaActivityThread(); c = sCtx; }
         if (c == null) return;
@@ -1816,6 +1922,7 @@ public final class Core {
             sOtherW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_other", DEFAULT_OTHER);
             sSpeedW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_speed", DEFAULT_SPEED);
             sAlarmW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_alarm", DEFAULT_ALARM);
+            sLockDateW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_lockdate", DEFAULT_LOCKDATE);
             sFamily = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_family", DEFAULT_FAMILY) != 0;
             sG1 = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_g1", DEFAULT_G1) != 0;
             sGlobalW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_global", DEFAULT_GLOBAL);
@@ -1826,6 +1933,7 @@ public final class Core {
             sLog = lv != 0;
             sLogVerbose = lv >= 2;
         } catch (Throwable ignored) { }
+        maybeDropLockDateVerdicts(prevLockDateW);
         // remote prefs overlay Settings.System; each key wins only when actually present,
         // so an empty remote store never shadows the adb-tunable hf_ff_* keys.
         SharedPreferences sp = sRemote;
@@ -1848,6 +1956,7 @@ public final class Core {
             sOtherW = intOf(all, "other", sOtherW);
             sSpeedW = intOf(all, "speed", sSpeedW);
             sAlarmW = intOf(all, "alarm", sAlarmW);
+            sLockDateW = intOf(all, "lockdate", sLockDateW);
             sFamily = intOf(all, "family", sFamily ? 1 : 0) != 0;
             sG1 = intOf(all, "g1", sG1 ? 1 : 0) != 0;
             sGlobalW = intOf(all, "global", sGlobalW);
@@ -1857,6 +1966,7 @@ public final class Core {
             int lv2 = intOf(all, "log", sLogVerbose ? 2 : (sLog ? 1 : 0));
             sLog = lv2 != 0;
             sLogVerbose = lv2 >= 2;
+            maybeDropLockDateVerdicts(prevLockDateW);
         } catch (Throwable ignored) { }
     }
 
