@@ -28,7 +28,7 @@ HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它
 
 原因在 §5.6：每次锁屏 ROM 都会用 `Typeface.create("mipro-regular", 0)` 把这块文字重写一遍，而 `mipro-regular` 这个别名在 ROM 自己的字体配置里是**被注释掉的**，请求根本落不到主题字体上，于是它永远拿系统默认字体（MiSans）。
 
-v1.4 起它不再靠副作用，而是和时钟、运营商并列的独立角色 `hf_ff_lockdate`，**默认 400**（= ROM 原值）：家族取自「确定正在使用主题字体的来源」（同一钟面的时间数字 → 主题落地的那个字体文件 → 进程默认家族），而不是把日期控件自己那张 MiSans 的 Typeface 重新烘一遍字重 —— 后者正是 v1.3 里「填了 `hf_ff_lockdate` 反而更像 MiSans」的原因。不想动它就 `settings put system hf_ff_lockdate 0`。
+1.3.0 起它不再靠副作用，而是和时钟、运营商并列的独立角色 `hf_ff_lockdate`，**默认 400**（= ROM 原值）：家族取自「确定正在使用主题字体的来源」（同一钟面的时间数字 → 主题落地的那个字体文件 → 进程默认家族），而不是把日期控件自己那张 MiSans 的 Typeface 重新烘一遍字重 —— 后者正是早期 v1.3 方案里「填了 `hf_ff_lockdate` 反而更像 MiSans」的原因。不想动它就 `settings put system hf_ff_lockdate 0`。
 
 ### 1.2 可选：锁屏只显示主卡运营商
 
@@ -56,7 +56,7 @@ v1.4 起它不再靠副作用，而是和时钟、运营商并列的独立角色
 
 前置条件：已 root，装了 LSPosed（或 libxposed 系框架，如 LSPosed 的 modern API 分支）。**不需要**元模块、不需要 Font Loader、不读写系统分区。
 
-1. 安装 `HyperFontFix-v1.3.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
+1. 安装 `HyperFontFix-v1.3.0.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
 2. 打开 LSPosed → 模块 → 启用 HyperFontFix，作用域只勾 **System UI（`com.android.systemui`）**（模块自带 scope 声明，正常只会列出这一个）；
 3. **重启一次SystemUI**。这是唯一必须重启的一步：注入只发生在进程启动时；
 4. 之后在主题商店应用你的第三方可变字体，状态栏那几处应该已经回到原生观感；
@@ -64,7 +64,7 @@ v1.4 起它不再靠副作用，而是和时钟、运营商并列的独立角色
 
 ```bash
 adb logcat -s HyperFontFix | head
-# 期望看到：v1.4 PER-ROLE installed, hooks=... clock=500 net=660 carrier=430 ... speed=900 alarm=500 lockdate=400 singlecarrier=0
+# 期望看到：v1.3.0 PER-ROLE installed, hooks=... clock=500 net=660 carrier=430 ... speed=900 alarm=500 lockdate=400 singlecarrier=0
 ```
 
 没有这一行就是没注入成功，回去检查作用域和模块开关；有这一行但某处还是偏细，跳到 §3.7 排查。
@@ -179,7 +179,7 @@ adb logcat -s HyperFontFix
 
 | 日志行 | 说明 |
 | ---- | ---- |
-| `v1.4 PER-ROLE installed, hooks=N clock=... net=... speed=... alarm=... lockdate=... singlecarrier=...` | 注入成功 + 当前全部配置快照。**没有这一行 = 模块根本没进 SystemUI**，先去 LSPosed 查作用域 |
+| `v1.3.0 PER-ROLE installed, hooks=N clock=... net=... speed=... alarm=... lockdate=... singlecarrier=...` | 注入成功 + 当前全部配置快照。**没有这一行 = 模块根本没进 SystemUI**，先去 LSPosed 查作用域 |
 | `SELFTEST file=... AXIS_TF=true AXIS_PAINT=false` | 三条写入通道的自证结果，判断「是不是字体文件路径没找到」 |
 | `T11 face 660 -> XxxView` | 绘制期确实给这个控件换上了 Typeface |
 | `T11 face refused XxxView` | 当前字体含 `HVAR`/`MVAR`，绘制期覆写自动跳过（防重排） |
@@ -311,9 +311,9 @@ mLunarCalendarInfo.setTypeface(dark ? tm : t);       // 农历行，和日期同
 
 所以普通态那个请求落不到别名上，实际就是默认家族的 regular（**400**）；深色态的 `mipro-medium` 是活的，**500**。控件本身又是普通 `android.widget.TextView`（`res/layout/miui_left_top_clock.xml` 里的 `@id/current_date`，`android:fontFamily="mipro-regular"`；其它钟面样式是 `id/oversize_b_date`、`id/pad_c_date`、`id/vertical_data_upper_view_date` …），类名一点线索都没有。
 
-关键区别：其它角色的问题只是**字重**错了（家族本来就是主题字体），这块文字是**家族**本身就错了 —— 它拿到的是未主题化的默认字体（MiSans），所以单纯重烘字重只会「得到精确字重的 MiSans」。v1.3 正是这样，于是出现了「`hf_ff_lockdate` 填上反而更像 MiSans，填 `0` 反而正常」的怪现象。
+关键区别：其它角色的问题只是**字重**错了（家族本来就是主题字体），这块文字是**家族**本身就错了 —— 它拿到的是未主题化的默认字体（MiSans），所以单纯重烘字重只会「得到精确字重的 MiSans」。早期 v1.3 方案正是这样，于是出现了「`hf_ff_lockdate` 填上反而更像 MiSans，填 `0` 反而正常」的怪现象。
 
-v1.4 把它做成与时钟 / 运营商并列的普通角色，两件事分开处理：
+1.3.0 把它做成与时钟 / 运营商并列的普通角色，两件事分开处理：
 
 **字重**：
 
@@ -358,8 +358,8 @@ v1.4 把它做成与时钟 / 运营商并列的普通角色，两件事分开处
 不用 Gradle：`tools/build_v4.ps1`（PowerShell + 本地 JDK）完成 javac → r8 → aapt2 → zip 塞入 → **resources.arsc 对齐** → apksig 签名 → 签名校验 + 结构自检，一条命令：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\build_v4.ps1 -Ver 1.4
-# 产物：HyperFontFix-v1.4.apk
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\build_v4.ps1 -Ver 1.3.0
+# 产物：HyperFontFix-v1.3.0.apk
 ```
 
 脚本按仓库相对路径推导工作目录，但工具链**不入库**（体积 / 许可原因），需要自备并放到约定位置：

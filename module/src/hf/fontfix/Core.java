@@ -713,6 +713,20 @@ public final class Core {
                 n++;
             log("T11 fallback TextView onDraw");
             }
+            // The all-in-one / classic clock styles' date line is ClassicTextAreaView: it
+            // overrides onDraw WITHOUT calling super, so the TextView hook above never
+            // sees it even though it paints through getPaint(). Give that one method the
+            // same draw-time authority. It is the only clock-package class that needs it;
+            // the digits keep their own wght animation.
+            try {
+                Class<?> ta = XposedHelpers.findClass(
+                        "com.miui.clock.classic.ClassicTextAreaView", cl);
+                java.lang.reflect.Method taDraw = XposedHelpers.findMethodExact(
+                        ta, "onDraw", Canvas.class);
+                XposedBridge.hookMethod(taDraw, clockDrawHook);
+                n++;
+                log("T11 hooked ClassicTextAreaView onDraw");
+            } catch (Throwable t) { log("T11 classic text area fail: " + t); }
         } catch (Throwable t) { log("T11 fail: " + t); }
 
         // ---------- T12: header resource/theme refresh ----------
@@ -823,7 +837,7 @@ public final class Core {
         } catch (Throwable t) { log("T15 fail: " + t); }
 
         refreshCfg();
-        log("v1.4 PER-ROLE installed, hooks=" + n
+        log("v1.3.0 PER-ROLE installed, hooks=" + n
                 + " clock=" + sClockW + " net=" + sNetW + " carrier=" + sCarrierW
                 + " batt=" + sBatteryW + " mark=" + sMarkW + " hollow=" + sHollowW
                 + " date=" + sDateW + " island=" + sIslandW + " other=" + sOtherW
@@ -1431,8 +1445,11 @@ public final class Core {
     /** Does the FIRST label of this layout have something to draw? ROM's own verdict. */
     private static boolean primaryCarrierShows(Object layout) {
         try {
+            // leftCarrierTextView is a ControlCenterCarrierText (a LinearLayout that OWNS
+            // the label), not a TextView - the TextView check this shipped with in v1.4
+            // was therefore always false and neither T14 nor T15 ever did anything.
             Object left = XposedHelpers.getObjectField(layout, "leftCarrierTextView");
-            if (!(left instanceof TextView)) return false;
+            if (left == null) return false;
             return Boolean.TRUE.equals(XposedHelpers.callMethod(left, "shouldShow"));
         } catch (Throwable t) { return false; }
     }
@@ -1769,6 +1786,13 @@ public final class Core {
         // and the MIUI clock faces whose names contain "Date". Also Chronometer (media /
         // smart-chip elapsed time). Default weight for this role is 0 = untouched.
         if (c.contains("date") || c.contains("chronometer")) return ROLE_DATE;
+        // The all-in-one / classic clock styles paint their date-lunar-weather line with
+        // com.miui.clock.classic.ClassicTextAreaView: a TextView subclass whose name lives
+        // under com.miui.clock, whose id is plain @text_area, and whose onDraw is its own
+        // (it never calls super). The "clock" rule below used to swallow it, so the one
+        // date line that is actually on screen never reached hf_ff_lockdate. It is a date
+        // surface, not clock digits: hand it to the lock-date role.
+        if (c.contains("classictextareaview")) return ROLE_LOCKDATE;
         if (c.contains("clock")) return ROLE_CLOCK;
         if (c.contains("battery")) return ROLE_BATTERY;
         return ROLE_NONE;
