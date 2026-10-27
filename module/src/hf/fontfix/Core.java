@@ -52,6 +52,20 @@ public final class Core {
     private static final String VAR_FONT_UTILS = "miuix.animation.font.VarFontUtils";
     private static final String MIUI_CLOCK = "com.android.systemui.statusbar.views.MiuiClock";
     private static final String HEADER_VIEW = "com.android.systemui.qs.MiuiNotificationHeaderView";
+    /**
+     * Keyguard clock face base class: setTextFontDark(Z) is the ROM's own write point
+     * for the lock-screen date line (see ROLE_LOCKDATE).
+     */
+    private static final String MIUI_BASE_CLOCK = "com.miui.clock.MiuiBaseClock";
+    /**
+     * The carrier label container. One class, three instances (control centre,
+     * notification shade, keyguard) - see inKeyguardCarrierLayout().
+     */
+    private static final String CARRIER_LAYOUT =
+            "com.android.systemui.controlcenter.shade.MiuiCarrierTextLayout";
+    /** One SIM's label + its "HD" / "+" satellites (LinearLayout). */
+    private static final String CARRIER_TEXT_WIDGET =
+            "com.android.systemui.controlcenter.shade.ControlCenterCarrierText";
 
     /**
      * Where the theme engine puts the applied third-party font. Verified in
@@ -95,9 +109,13 @@ public final class Core {
      * (res/layout/miui_left_top_clock.xml line 25, android:fontFamily="mipro-regular")
      * plus the per-style equivalents (id/oversize_b_date, id/pad_c_date,
      * id/vertical_data_upper_view_date, ...).
-     * Default stays 0: these views sit inside the clock-face zoo that the draw-time
-     * ban has protected since v5.5, and some styles animate the date through Folme.
-     * hf_ff_lockdate > 0 both assigns this role and lifts the ban for it.
+     * This is the one role whose FAMILY is wrong, not only its weight: the dead alias
+     * resolves to the unthemed default (MiSans), so a theme font never reaches this
+     * text. The face we install therefore comes from themeFaceAt(), i.e. from a source
+     * that is known to render with the applied font (the clock face's own time view, the
+     * theme font file, the default family) - never from a re-weighted copy of this view's
+     * own MiSans face, which is what v1.3 did and why the date looked MORE like MiSans
+     * with hf_ff_lockdate set than with it at 0.
      */
     private static final int ROLE_LOCKDATE = 11;
 
@@ -195,7 +213,7 @@ public final class Core {
      * did. The ROM asks for regular (400), or 500 while the clock uses dark text, so
      * 400 is the value that reproduces the stock look once a theme font is applied.
      */
-    static final int DEFAULT_LOCKDATE = 0;
+    static final int DEFAULT_LOCKDATE = 400;
     /** com.miui.aod is out of scope now; hf_ff_aod=1 re-enables it for experiments. */
     static final int DEFAULT_AOD = 0;
     /**
@@ -222,6 +240,22 @@ public final class Core {
     static final int DEFAULT_GLOBAL = 460;
     /** 0 = per-role only. hf_ff_all=N restores the v4.0 "bold everything" mode. */
     static final int DEFAULT_ALL = 0;
+    /**
+     * This one changes WHAT is displayed rather than how heavy a glyph is, so unlike
+     * every weight it stays off until the user asks for it. hf_ff_singlecarrier 1 =
+     * on the lock screen show only the primary SIM's operator name.
+     *
+     * Why it exists: the keyguard carrier block is TWO ControlCenterCarrierText labels
+     * (slot 0 = SIM1 first, slot 1 second) with a separator between them, and
+     * MiuiKeyguardStatusBarView translates/hides the WHOLE block when the Super Island
+     * needs the room - so with two operator names side by side the user often ends up
+     * seeing neither, and the left of the keyguard status bar goes empty. Showing only
+     * the primary label keeps the block short enough to survive the avoidance.
+     * The separators are hidden by the ROM itself: MiuiCarrierTextLayout.onMeasure only
+     * shows them while BOTH labels report ControlCenterCarrierText.shouldShow(), and
+     * that is exactly the verdict we override (T14).
+     */
+    static final int DEFAULT_SINGLE = 0;
     private static volatile boolean sAod = false;
     private static volatile int sClockW = DEFAULT_CLOCK;
     private static volatile int sNetW = DEFAULT_NET;
@@ -243,6 +277,8 @@ public final class Core {
     private static volatile int sGlobalW = DEFAULT_GLOBAL;
     /** v4.0 compatibility switch: >0 serves this weight to everything unclassified. */
     private static volatile int sAll = DEFAULT_ALL;
+    /** hf_ff_singlecarrier: keyguard shows the primary operator label only. */
+    private static volatile boolean sSingleCarrier = DEFAULT_SINGLE != 0;
     private static volatile boolean sLog;
     private static volatile boolean sLogVerbose;
     private static volatile boolean sTriedCloneCtor;
@@ -698,19 +734,103 @@ public final class Core {
                             forceTypeface(tv, sClockW, "T12");
                         }
                     } catch (Throwable ignored) { }
+                    // updateResources$NN is also the theme / font-change signal: the family
+                    // we borrowed for the lock-screen date belongs to the OLD font now, so
+                    // throw away the derived faces and let T13 capture the new one.
+                    if (sFamilyRef != null) {
+                        sFamilyRef = null;
+                        sThemeFaces.clear();
+                        sFixed.clear();
+                        log("theme change: lock-date family source dropped");
+                    }
                 }
             });
             n++;
         } catch (Throwable t) { log("T12 fail: " + t); }
 
+        // ---------- T13: lock-screen date at the ROM's own write point ----------
+        // com.miui.clock.MiuiBaseClock.setTextFontDark(Z) is the ONLY place the keyguard
+        // clock faces hand the date line a Typeface, and it also runs on every wallpaper
+        // palette change (MiuiClockController -> setTextColorDark -> setTextFontDark).
+        // Hooking it does two things the draw hook cannot: it captures the FAMILY the
+        // same clock face paints its big time with (themeFaceAt), and it re-asserts the
+        // date face right after the ROM overwrote it, so the very first frame is already
+        // correct. MiuiBaseClock.onFinishInflate covers the styles that never see a
+        // palette change. All four clock styles (LeftTop / LeftTopLarge / Vertical /
+        // CenterHorizontal) override setTextFontDark and call invoke-super, so hooking
+        // the base method once is enough; the subclass hooks below are belt-and-braces
+        // for styles that skip super.
+        try {
+            XC_MethodHook dateFace = new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    lockDateFromClock(p.thisObject, "T13");
+                }
+            };
+            Class<?> base = XposedHelpers.findClass(MIUI_BASE_CLOCK, cl);
+            XposedHelpers.findAndHookMethod(base, "setTextFontDark", boolean.class, dateFace);
+            XposedHelpers.findAndHookMethod(base, "onFinishInflate", dateFace);
+            n += 2;
+            String[] styles = {
+                    "com.miui.clock.MiuiLeftTopClock",
+                    "com.miui.clock.MiuiLeftTopLargeClock",
+                    "com.miui.clock.MiuiVerticalClock",
+                    "com.miui.clock.MiuiCenterHorizontalClock",
+            };
+            for (int i = 0; i < styles.length; i++) {
+                try {
+                    Class<?> c = XposedHelpers.findClass(styles[i], cl);
+                    XposedHelpers.findAndHookMethod(c, "setTextFontDark", boolean.class, dateFace);
+                    n++;
+                } catch (Throwable ignored) { }
+            }
+            log("T13 lock-screen date hooked at MiuiBaseClock");
+        } catch (Throwable t) { log("T13 fail: " + t); }
+
+        // ---------- T14: keyguard carrier verdict ----------
+        // ControlCenterCarrierText.shouldShow() is the single input MiuiCarrierTextLayout
+        // .onMeasure uses for BOTH of its decisions: whether the separator between the
+        // two operator labels is visible, and how the available width is split. Answering
+        // "no" for the SECOND label (only on the keyguard instance, only while the
+        // primary label has something to show, only with hf_ff_singlecarrier=1) therefore
+        // hides the " | " separator with the ROM's own code instead of fighting it.
+        try {
+            Class<?> widget = XposedHelpers.findClass(CARRIER_TEXT_WIDGET, cl);
+            XposedHelpers.findAndHookMethod(widget, "shouldShow", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (secondaryCarrierSuppressed(p.thisObject)) p.setResult(Boolean.FALSE);
+                }
+            });
+            n++;
+        } catch (Throwable t) { log("T14 fail: " + t); }
+
+        // ---------- T15: hide the second label itself ----------
+        // T14 only shrinks the layout's own arithmetic; the second ControlCenterCarrierText
+        // is still a VISIBLE container holding its (still filled) TextView, so it has to be
+        // taken out of the line. Doing it in BEFORE onMeasure means the ROM's very next
+        // measurement already ignores it, and the width the keyguard status bar sees is the
+        // short one - which is the whole point: the Super Island avoidance then has room.
+        // Nothing in the ROM ever sets the visibility of these two containers (it only
+        // touches their children), so the views we hide are ours to restore.
+        try {
+            Class<?> layout = XposedHelpers.findClass(CARRIER_LAYOUT, cl);
+            XposedHelpers.findAndHookMethod(layout, "onMeasure", int.class, int.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            applySingleCarrier(p.thisObject);
+                        }
+                    });
+            n++;
+        } catch (Throwable t) { log("T15 fail: " + t); }
+
         refreshCfg();
-        log("v1.3 PER-ROLE installed, hooks=" + n
+        log("v1.4 PER-ROLE installed, hooks=" + n
                 + " clock=" + sClockW + " net=" + sNetW + " carrier=" + sCarrierW
                 + " batt=" + sBatteryW + " mark=" + sMarkW + " hollow=" + sHollowW
                 + " date=" + sDateW + " island=" + sIslandW + " other=" + sOtherW
                 + " speed=" + sSpeedW
                 + " alarm=" + sAlarmW
                 + " lockdate=" + sLockDateW
+                + " singlecarrier=" + (sSingleCarrier ? 1 : 0)
                 + " family=" + (sFamily ? 1 : 0) + " g1=" + (sG1 ? 1 : 0)
                 + " global=" + sGlobalW + " all=" + sAll
                 + " aod=" + (sAod ? 1 : 0)
@@ -746,7 +866,19 @@ public final class Core {
             if (!drawFaceAllowed(tv, role)) return;
             Typeface base = tv.getTypeface();
             if (base == null) return;
-            Typeface face = sOurClones.contains(base) ? base : clamp(base, wght, "draw");
+            // ROLE_LOCKDATE is the one role that needs a different FAMILY: its own face
+            // comes from the dead "mipro-regular" alias (MiSans), so re-baking the axis of
+            // that face would faithfully reproduce MiSans at exactly the weight we asked
+            // for - which is what v1.3 did. Everything else keeps its family and only gets
+            // the axis moved.
+            Typeface face;
+            if (sOurClones.contains(base)) {
+                face = base;
+            } else if (role == ROLE_LOCKDATE) {
+                face = themeFaceAt(wght, "draw");
+            } else {
+                face = clamp(base, wght, "draw");
+            }
             if (face == null) return;
             if (tp != null && tp.getTypeface() != face) {
                 tp.setTypeface(face);
@@ -788,10 +920,11 @@ public final class Core {
         // is a Chronometer, so without this draw-time gate it would be allowed only
         // by coincidence of a class name and then stamped by an inapplicable weight.
         if (role == ROLE_CARRIER || role == ROLE_SPEED || role == ROLE_ALARM) return true;
-        // The lock-screen date is a plain TextView inside a clock face, i.e. exactly
-        // the combination this guard exists to refuse. ROLE_LOCKDATE is only
-        // assignable while hf_ff_lockdate > 0, so arriving here means the user asked
-        // for that one view by name; nothing else can reach this branch.
+        // The lock-screen date is a plain TextView inside a clock face, i.e. exactly the
+        // combination this guard exists to refuse. It gets in on its own role, which is
+        // only ever assigned to a view whose resource entry name says "date" AND whose
+        // parent chain contains a clock face (see roleFromLockDate) - the two conditions
+        // together are what keeps this open without opening the clock-face zoo.
         if (role == ROLE_LOCKDATE) return true;
         String n = tv.getClass().getName();
         Boolean known = sDrawFaceOk.get(n);
@@ -1076,6 +1209,304 @@ public final class Core {
     private static volatile String sFontPath;
     private static volatile long sFontPathAt;
 
+    /**
+     * A Typeface that is known to render with the font the user actually applied, used
+     * only to give the lock-screen date a family. Captured from the clock face's own time
+     * view (MiuiBaseClock.getTimeView()) in T13, i.e. from the text painted immediately
+     * above the date line - whatever the theme engine did to that one is exactly what the
+     * date should look like. Never one of our own clones.
+     */
+    private static volatile Typeface sFamilyRef;
+    private static final Map<String, Typeface> sThemeFaces =
+            new ConcurrentHashMap<String, Typeface>();
+
+    private static String familyOf(Typeface tf) {
+        if (tf == null) return null;
+        try { return (String) XposedHelpers.callMethod(tf, "getFamily"); }
+        catch (Throwable t) { return null; }
+    }
+
+    /**
+     * `ro.miui.ui.font.mi_font_path` never changes during a process, and themeFaceAt()
+     * needs it on the DRAW path to tell "we found the theme file" apart from "we fell back
+     * to the stock file" - so read it once. Reflection per frame would be silly.
+     */
+    private static volatile String sStockPath;
+    private static volatile boolean sStockPathProbed;
+
+    private static String stockPath() {
+        if (sStockPathProbed) return sStockPath;
+        String p = sysProp(MI_FONT_PATH_PROP);
+        sStockPath = p;
+        sStockPathProbed = true;
+        return p;
+    }
+
+    /**
+     * Family name of the font the ROM itself ships (ro.miui.ui.font.mi_font_path, i.e.
+     * MiSans on this build). Read once from the FILE, because that is the only answer that
+     * cannot have been influenced by the theme engine, and it is what lets us tell
+     * "this face really is the user's theme font" apart from "this face is still the stock
+     * font wearing a different alias".
+     */
+    private static volatile String sStockFamily;
+    private static volatile boolean sStockFamilyProbed;
+
+    private static String stockFamily() {
+        if (sStockFamilyProbed) return sStockFamily;
+        try {
+            String p = stockPath();
+            if (p != null && p.length() > 0) sStockFamily = familyOf(rawBake(p));
+        } catch (Throwable ignored) { }
+        // Latch afterwards: until the first answer lands themedFamily() accepts, which is
+        // the same thing it would do on a ROM without the property.
+        sStockFamilyProbed = true;
+        if (sLog) log("stock family=" + sStockFamily);
+        return sStockFamily;
+    }
+
+    /**
+     * Does this face carry a family that is NOT the ROM's built-in font? Some clock styles
+     * paint their digits with Typeface.create("miclock-time", 0) and that alias does not
+     * exist in the ROM's font config either, so the sibling next to the date line can be
+     * MiSans - adopting it blindly would reproduce the exact bug this is meant to fix.
+     */
+    private static boolean themedFamily(Typeface tf) {
+        String fam = familyOf(tf);
+        if (fam == null || fam.length() == 0 || fam.startsWith("'")) return false;
+        String stock = stockFamily();
+        return stock == null || stock.length() == 0 || !stock.equalsIgnoreCase(fam);
+    }
+
+    /**
+     * Remember where "the applied font" comes from, so the derived faces can be rebuilt
+     * when the font changes. A theme or font change clears it (T12) and the next palette
+     * change supplies the new one.
+     */
+    private static void rememberClockFace(Typeface tf, String via) {
+        try {
+            if (tf == null || sOurClones.contains(tf)) return;
+            Typeface cur = sFamilyRef;
+            if (cur != null && familyOf(tf).equals(familyOf(cur))) return;
+            if (!themedFamily(tf)) {
+                // Not a rejection of the whole idea, just of this source - themeFaceAt
+                // still has the theme font FILE and the default family to try.
+                logOnce("famref:" + via + ":" + familyOf(tf),
+                        "lockdate family source refused via=" + via + " fam=" + familyOf(tf)
+                        + " (stock=" + stockFamily() + ")");
+                return;
+            }
+            String fam = familyOf(tf);
+            sFamilyRef = tf;
+            sThemeFaces.clear();
+            log("lockdate family source=" + via + " fam=" + fam + " var=" + variationOf(tf));
+        } catch (Throwable ignored) { }
+    }
+
+    /** Re-weight one candidate family source; cached per (instance, weight). */
+    private static Typeface reweight(Typeface ref, int wght, String via, String tag) {
+        if (ref == null) return null;
+        try {
+            String key = System.identityHashCode(ref) + "@" + wght;
+            Typeface hit = sThemeFaces.get(key);
+            if (hit == null) {
+                try { hit = Typeface.create(ref, wght, false); } catch (Throwable t) { hit = null; }
+                if (hit != null) {
+                    sOurClones.add(hit);
+                    sThemeFaces.put(key, hit);
+                    log("lockdate face source=" + tag + " via=" + via + " fam=" + familyOf(hit)
+                            + " w=" + wght + " var=" + variationOf(hit));
+                }
+            }
+            return hit;
+        } catch (Throwable t) {
+            if (sLog) log("reweight(" + tag + ") err " + t);
+            return null;
+        }
+    }
+
+    /**
+     * A face with the family the rest of the screen uses, at our weight - the answer to
+     * "the lock-screen date is still MiSans". Order matters:
+     *   1) the sibling face of the same clock face (T13), but only when its family is
+     *      provably not the stock font: the face is re-weighted with the real font-weight
+     *      API (Typeface.create(base, weight, false)), so its family cannot drift from
+     *      what the ROM paints one line above the date;
+     *   2) a fresh bake of the file the theme engine landed in /data/system/theme/fonts/,
+     *      i.e. the same source MiuiConfigs' own ramp is rebuilt from once a font is
+     *      applied - this is the route the lock-date unification has always used;
+     *   3) a bake of the stock file: with no theme file in play that is exactly what the
+     *      dead alias hands the view anyway, so it can only reproduce the ROM's own look;
+     *   4) last, the process default family (Typeface.DEFAULT). It is what third-party
+     *      apps follow when a theme font is applied, but it is a Latin-first family with
+     *      its CJK glyphs coming from a fallback list, so it is the one candidate we cannot
+     *      prove keeps the Chinese date characters - hence the last chance, used when the
+     *      file route is unavailable or distrusted (see faceMatchCheck/sBakeTrust).
+     * Returns null only if every route failed: callers then leave the view alone rather
+     * than install a face whose family they only believe they know.
+     */
+    private static Typeface themeFaceAt(int wght, String via) {
+        if (wght <= 0) return null;
+        Typeface hit = reweight(sFamilyRef, wght, via, "clockface");
+        if (hit != null) return hit;
+        boolean trustBake = !Boolean.FALSE.equals(sBakeTrust);
+        String path = fontPath();
+        String stock = stockPath();
+        if (trustBake && path != null) {
+            hit = bakeFromFontFile(wght);
+            if (hit != null) {
+                // "themed" here only means: the file we just baked is not the stock one.
+                logOnce("bakepath:" + path + ":" + wght,
+                        "lockdate baked from " + path
+                        + (path.equals(stock) ? " (stock)" : " (theme file)"));
+                return hit;
+            }
+        }
+        return reweight(Typeface.DEFAULT, wght, via, "default");
+    }
+
+    /**
+     * T13 body: take the two date TextViews of one clock face away from the dead
+     * "mipro-regular" alias. Also grabs the family source from the face's own time view
+     * while we are here - at this point the ROM has just written ITS faces, so the time
+     * view still carries what the theme engine produced.
+     */
+    private static void lockDateFromClock(Object clock, String via) {
+        refreshCfg();
+        if (!sEnable || clock == null) return;
+        int w = sLockDateW;
+        if (w <= 0) return;
+        try {
+            Object time = XposedHelpers.callMethod(clock, "getTimeView");
+            if (time instanceof TextView) rememberClockFace(((TextView) time).getTypeface(), via);
+        } catch (Throwable ignored) {
+            // Not every style exposes a time view; themeFaceAt() still has the file route.
+        }
+        String[] fields = { "mCurrentDate", "mLunarCalendarInfo" };
+        for (int i = 0; i < fields.length; i++) {
+            try {
+                Object o = XposedHelpers.getObjectField(clock, fields[i]);
+                if (!(o instanceof TextView)) continue;
+                TextView tv = (TextView) o;
+                sRoles.put(tv, Integer.valueOf(ROLE_LOCKDATE));
+                forceTypeface(tv, w, via);
+            } catch (Throwable ignored) { }
+        }
+    }
+
+    /**
+     * Which of the MiuiCarrierTextLayout instances is this? The class is used by the
+     * control centre (id/normal_control_center_carrier_layout), the notification shade
+     * (id/notification_shade_carrier_layout) and the lock screen
+     * (id/keyguard_carrier_layout, res/layout/keyguard_status_bar.xml line 49), and the
+     * ROM tells them apart with the Kotlin lazy keyguardHeaderLayout$delegate
+     * (MiuiCarrierTextLayout$$ExternalSyntheticLambda0: getId() == id/keyguard_carrier_layout).
+     * Ask the ROM first, fall back to our own resource entry name. Cached per id.
+     */
+    private static final Map<Integer, Boolean> sKeyguardLayout =
+            new ConcurrentHashMap<Integer, Boolean>();
+
+    private static boolean inKeyguardCarrierLayout(android.view.View v) {
+        int id;
+        try { id = v.getId(); } catch (Throwable t) { return false; }
+        if (id == 0) return false;
+        Boolean known = sKeyguardLayout.get(Integer.valueOf(id));
+        if (known != null) return known.booleanValue();
+        boolean ok = false;
+        try {
+            Object lazy = XposedHelpers.getObjectField(v, "keyguardHeaderLayout$delegate");
+            if (lazy != null) ok = Boolean.TRUE.equals(XposedHelpers.callMethod(lazy, "getValue"));
+        } catch (Throwable ignored) { }
+        if (!ok) {
+            try {
+                String n = v.getResources().getResourceEntryName(id);
+                ok = n != null && n.toLowerCase().indexOf("keyguard") >= 0;
+            } catch (Throwable ignored) { }
+        }
+        sKeyguardLayout.put(Integer.valueOf(id), Boolean.valueOf(ok));
+        if (sLog) log("carrier-layout @" + id + " keyguard=" + ok);
+        return ok;
+    }
+
+    /** Does the FIRST label of this layout have something to draw? ROM's own verdict. */
+    private static boolean primaryCarrierShows(Object layout) {
+        try {
+            Object left = XposedHelpers.getObjectField(layout, "leftCarrierTextView");
+            if (!(left instanceof TextView)) return false;
+            return Boolean.TRUE.equals(XposedHelpers.callMethod(left, "shouldShow"));
+        } catch (Throwable t) { return false; }
+    }
+
+    /**
+     * Is this ControlCenterCarrierText the one we suppress? Three conditions, all of them
+     * the ROM's own data: it must be the SECOND slot (innerCarrierSlotId != 0, i.e. not
+     * SIM1), it must belong to a keyguard instance (isKeyguardLayout is written by
+     * MiuiCarrierTextLayout from getKeyguardHeaderLayout()), and the primary label must
+     * actually be showing - otherwise hiding the second one would leave the keyguard with
+     * no operator name at all.
+     *
+     * No recursion risk with T14: this only ever asks shouldShow() of the PRIMARY label,
+     * and the hook returns before reaching here for slot 0.
+     */
+    private static boolean secondaryCarrierSuppressed(Object widget) {
+        if (!sEnable || !sSingleCarrier || !(widget instanceof android.view.View)) return false;
+        try {
+            if (XposedHelpers.getIntField(widget, "innerCarrierSlotId") == 0) return false;
+            if (!XposedHelpers.getBooleanField(widget, "isKeyguardLayout")) return false;
+            Object parent = ((android.view.View) widget).getParent();
+            if (parent == null) return false;
+            return primaryCarrierShows(parent);
+        } catch (Throwable ignored) { }
+        return false;
+    }
+
+    /** Views whose visibility WE set to GONE, so only those get restored. */
+    private static final java.util.Set<android.view.View> sCarrierHidden =
+            Collections.newSetFromMap(new WeakHashMap<android.view.View, Boolean>());
+
+    private static void hideCarrierChild(Object owner, String field, boolean hide) {
+        try {
+            Object o = XposedHelpers.getObjectField(owner, field);
+            if (!(o instanceof android.view.View)) return;
+            android.view.View v = (android.view.View) o;
+            if (hide) {
+                if (v.getVisibility() != android.view.View.GONE) {
+                    v.setVisibility(android.view.View.GONE);
+                    sCarrierHidden.add(v);
+                    log("singlecarrier hid " + field);
+                }
+            } else if (sCarrierHidden.remove(v) && v.getVisibility() == android.view.View.GONE) {
+                v.setVisibility(android.view.View.VISIBLE);
+                log("singlecarrier restored " + field);
+            }
+        } catch (Throwable ignored) { }
+    }
+
+    /**
+     * T15 body, run before every measure of a carrier layout. When the switch is off or
+     * this is not the keyguard instance the only thing it does is undo our own GONE, so
+     * flipping hf_ff_singlecarrier live converges on the next layout pass.
+     * hf_ff_enable 0 has to take the SAME path (restore), otherwise disabling the module
+     * would leave the second label hidden - which is not what "changes nothing" means.
+     */
+    private static void applySingleCarrier(Object layout) {
+        boolean hide = false;
+        try {
+            hide = sEnable
+                    && sSingleCarrier
+                    && inKeyguardCarrierLayout((android.view.View) layout)
+                    && primaryCarrierShows(layout);
+        } catch (Throwable ignored) { }
+        hideCarrierChild(layout, "rightCarrierTextView", hide);
+        if (!hide) return;
+        // The ROM hides both separators for us once T14 has answered "no" for the second
+        // label, because that is precisely its own condition. Saying it again costs
+        // nothing (setVisibility with an unchanged value is a no-op) and covers a build
+        // where the separator decision moved somewhere else.
+        hideCarrierChild(layout, "carrierSeparatorText", true);
+        hideCarrierChild(layout, "carrierSeparatorView", true);
+    }
+
     private static String sysProp(String key) {
         try {
             Object v = XposedHelpers.callStaticMethod(
@@ -1216,6 +1647,10 @@ public final class Core {
                                 + " adv=" + wa + "/" + wb
                                 + " raw=" + ra + " rawPaint700=" + rb
                                 + " AXIS_TF=" + grew(ia, ib) + " AXIS_PAINT=" + grew(ra, rb));
+                        // Warm the stock-family probe on THIS thread: it loads the ROM's
+                        // own 34 MB font file, and the only consumer is the lock-screen
+                        // date (T13), which runs on the inflating thread.
+                        stockFamily();
                         faceMatchCheck();
                     } catch (Throwable t) { log("SELFTEST fail " + t); }
                 }
@@ -1524,17 +1959,21 @@ public final class Core {
     }
 
     /**
-     * Lock-screen date, opt-in only. Both signals are needed: a resource entry name
-     * that says "date" AND a clock face somewhere above it. The pair is cached per id
-     * because an id only ever appears in the layouts it belongs to. While
-     * hf_ff_lockdate is 0 we bail out before touching the cache, so turning the key
-     * on later still gets a fresh verdict.
+     * Lock-screen date. Two signals are needed, because this role has to open the
+     * draw-time clock-face ban (drawFaceAllowed) and that is not something a single weak
+     * match should be able to do: a resource entry name that says "date" AND a clock face
+     * somewhere above it in the parent chain. The pair is cached per id because an id only
+     * ever appears in the layouts it belongs to.
+     *
+     * The role is assigned exactly the way clock / carrier / battery are - it is NOT gated
+     * on its own key having a non-zero value. hf_ff_lockdate only decides what happens
+     * once the role has matched: 0 leaves the view alone (wghtFor -> 0 -> skipped), any
+     * other value stamps it. Same contract as every other role.
      */
     private static final Map<Integer, Boolean> sLockDateIds =
             new java.util.concurrent.ConcurrentHashMap<Integer, Boolean>();
 
     private static int roleFromLockDate(TextView tv) {
-        if (sLockDateW <= 0) return ROLE_NONE;
         int id;
         try { id = tv.getId(); } catch (Throwable t) { return ROLE_NONE; }
         if (id == 0) return ROLE_NONE;
@@ -1684,13 +2123,19 @@ public final class Core {
      * Replace the view's current Typeface at the SOURCE with a re-baked constant-axis
      * clone (real 'wght' axis, never fake bold), then sync the paint. Idempotent:
      * once the view already carries one of our clones it is left untouched.
+     *
+     * The ROLE_LOCKDATE view is the exception: cloning ITS face keeps the wrong family
+     * (see themeFaceAt), so for that one role the replacement comes from the sibling
+     * clock face / theme font file instead.
      */
     private static void forceTypeface(TextView tv, int w, String via) {
         if (tv == null || w <= 0) return;
         try {
+            Integer r = sRoles.get(tv);
+            boolean needFamily = r != null && r.intValue() == ROLE_LOCKDATE;
             Typeface base = tv.getTypeface();
             if (base != null && !sOurClones.contains(base)) {
-                Typeface nb = cloneWithAxis(base, w);
+                Typeface nb = needFamily ? themeFaceAt(w, via) : cloneWithAxis(base, w);
                 if (nb != null) {
                     sOurClones.add(nb);
                     tv.setTypeface(nb);
@@ -1879,12 +2324,11 @@ public final class Core {
     }
 
     /**
-     * hf_ff_lockdate is the first role that ships switched OFF, and that has one
-     * consequence: while the key was 0 the draw hook stored a ROLE_NONE verdict per
-     * view (and skipped the id/parent probe entirely), and ROLE_NONE is never looked
-     * at again. Dropping only the negative verdicts on the 0 -> >0 transition keeps
-     * the "flip the key, live in two seconds" promise without touching the positive
-     * claims -- the per-instance battery tags in particular must survive.
+     * A ROLE_NONE verdict in sRoles is permanent for that view, so a view measured while
+     * hf_ff_lockdate was 0 (the documented way to leave the lock-screen date alone) would
+     * never be re-examined after the user raised it. Dropping ONLY the negative verdicts
+     * on that transition keeps the "flip the key, live in two seconds" promise without
+     * disturbing the positive claims - the per-instance battery tags must survive.
      */
     private static void maybeDropLockDateVerdicts(int prev) {
         if (sLockDateW <= 0 || prev > 0) return;
@@ -1923,6 +2367,8 @@ public final class Core {
             sSpeedW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_speed", DEFAULT_SPEED);
             sAlarmW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_alarm", DEFAULT_ALARM);
             sLockDateW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_lockdate", DEFAULT_LOCKDATE);
+            sSingleCarrier = android.provider.Settings.System.getInt(c.getContentResolver(),
+                    "hf_ff_singlecarrier", DEFAULT_SINGLE) != 0;
             sFamily = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_family", DEFAULT_FAMILY) != 0;
             sG1 = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_g1", DEFAULT_G1) != 0;
             sGlobalW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_global", DEFAULT_GLOBAL);
@@ -1957,6 +2403,7 @@ public final class Core {
             sSpeedW = intOf(all, "speed", sSpeedW);
             sAlarmW = intOf(all, "alarm", sAlarmW);
             sLockDateW = intOf(all, "lockdate", sLockDateW);
+            sSingleCarrier = intOf(all, "singlecarrier", sSingleCarrier ? 1 : 0) != 0;
             sFamily = intOf(all, "family", sFamily ? 1 : 0) != 0;
             sG1 = intOf(all, "g1", sG1 ? 1 : 0) != 0;
             sGlobalW = intOf(all, "global", sGlobalW);
