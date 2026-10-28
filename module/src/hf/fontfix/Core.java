@@ -136,6 +136,14 @@ public final class Core {
     /** Typefaces we produced ourselves (idempotence marker). */
     private static final java.util.Set<Typeface> sOurClones =
             Collections.newSetFromMap(new ConcurrentHashMap<Typeface, Boolean>());
+    /**
+     * Weight each of our clones was baked at. A clone carries a CONSTANT axis, so
+     * neither getWeight() nor the paint string tells whether it still matches the
+     * current config - Typeface#getWeight() reports the file's default style, not the
+     * 'wght' variation we asked for.
+     */
+    private static final Map<Typeface, Integer> sCloneW =
+            new ConcurrentHashMap<Typeface, Integer>();
     /** Typeface instances that ARE MiuiConfigs baked statics (final -> set() blocked). */
     private static final java.util.Set<Typeface> sMcStatics =
             Collections.newSetFromMap(new ConcurrentHashMap<Typeface, Boolean>());
@@ -379,7 +387,7 @@ public final class Core {
                         }
                         Typeface fixed = cloneWithAxis(tf, w);
                         if (fixed != null) {
-                            sOurClones.add(fixed);
+                            own(fixed, w);
                             p.args[0] = fixed;
                             if (sLogVerbose) log("T1pre swap->" + w);
                         }
@@ -886,10 +894,12 @@ public final class Core {
             // for - which is what v1.3 did. Everything else keeps its family and only gets
             // the axis moved.
             Typeface face;
-            if (sOurClones.contains(base)) {
-                face = base;
-            } else if (role == ROLE_LOCKDATE) {
+            if (role == ROLE_LOCKDATE) {
                 face = themeFaceAt(wght, "draw");
+            } else if (sOurClones.contains(base)) {
+                // Ours is a constant-axis face: if the config moved on, the string
+                // stamp above cannot move it, so bake the requested weight again.
+                face = cloneWeight(base) == wght ? base : rebake(base, wght);
             } else {
                 face = clamp(base, wght, "draw");
             }
@@ -1039,7 +1049,7 @@ public final class Core {
                 if (target <= 0) continue;
                 Typeface fixed = cloneWithAxis(tf, target);
                 if (fixed == null) continue;
-                sOurClones.add(fixed);
+                own(fixed, target);
                 try {
                     f.set(null, fixed);
                     log("MCFG(" + when + ")." + f.getName() + " re-baked -> " + target);
@@ -1140,7 +1150,7 @@ public final class Core {
         if (fixed == null) {
             fixed = cloneWithAxis(res, w);
             if (fixed == null) return null;
-            sOurClones.add(fixed);
+            own(fixed, w);
             sFixed.put(key, fixed);
         }
         logOnce("clamp:" + label, label + " re-bake -> axis " + w);
@@ -1326,7 +1336,7 @@ public final class Core {
             if (hit == null) {
                 try { hit = Typeface.create(ref, wght, false); } catch (Throwable t) { hit = null; }
                 if (hit != null) {
-                    sOurClones.add(hit);
+                    own(hit, wght);
                     sThemeFaces.put(key, hit);
                     log("lockdate face source=" + tag + " via=" + via + " fam=" + familyOf(hit)
                             + " w=" + wght + " var=" + variationOf(hit));
@@ -1593,7 +1603,7 @@ public final class Core {
         }
         if (t != null) {
             sBaked.put(key, t);
-            sOurClones.add(t);
+            own(t, wght);
             if (sLog) log("bake " + key);
         }
         return t;
@@ -2158,16 +2168,75 @@ public final class Core {
             Integer r = sRoles.get(tv);
             boolean needFamily = r != null && r.intValue() == ROLE_LOCKDATE;
             Typeface base = tv.getTypeface();
-            if (base != null && !sOurClones.contains(base)) {
-                Typeface nb = needFamily ? themeFaceAt(w, via) : cloneWithAxis(base, w);
-                if (nb != null) {
-                    sOurClones.add(nb);
+            if (base != null) {
+                Typeface nb;
+                if (needFamily) {
+                    // Keyed by weight already, so a config change yields a new face and
+                    // an unchanged one is the very instance the view already carries.
+                    nb = themeFaceAt(w, via);
+                } else if (sOurClones.contains(base)) {
+                    // A clone is a constant-axis instance: keeping it means the view
+                    // stays at the weight it was baked at, no matter what the config
+                    // now says. Re-bake from the font file so live slider changes (and
+                    // the status bar clock, which never gets a fresh setTypeface from
+                    // the ROM) follow the setting.
+                    nb = cloneWeight(base) == w ? null : rebake(base, w);
+                } else {
+                    nb = cloneWithAxis(base, w);
+                }
+                if (nb != null && nb != base) {
+                    own(nb, w);
                     tv.setTypeface(nb);
                     if (sLog) log(via + " tf->" + w + " @ " + tv.getClass().getSimpleName());
                 }
             }
             apply(tv, w, via);
         } catch (Throwable ignored) { }
+    }
+
+    /** Register one of our baked faces together with the weight it was baked at. */
+    private static void own(Typeface tf, int wght) {
+        if (tf == null) return;
+        sOurClones.add(tf);
+        sCloneW.put(tf, Integer.valueOf(wght));
+    }
+
+    /**
+     * Weight one of our own clones was baked at, or -1 when unknown. Never trust
+     * Typeface#getWeight() first: for a face built with setFontVariationSettings()
+     * it reports the file's default style, not the 'wght' instance we requested.
+     */
+    private static int cloneWeight(Typeface tf) {
+        if (tf == null) return -1;
+        Integer known = sCloneW.get(tf);
+        if (known != null) return known.intValue();
+        int fromVar = parseWght(variationOf(tf));
+        if (fromVar > 0) return fromVar;
+        try {
+            Object g = XposedHelpers.callMethod(tf, "getWeight");
+            return g instanceof Number ? ((Number) g).intValue() : -1;
+        } catch (Throwable t) { return -1; }
+    }
+
+    /**
+     * Bake a replacement for one of our own clones at a new weight. Cached per
+     * (clone, weight): the draw path asks once per frame, and a theme font re-bake
+     * must not run at 60 Hz.
+     */
+    private static Typeface rebake(Typeface base, int wght) {
+        String key = System.identityHashCode(base) + "|" + wght;
+        Typeface fixed = sFixed.get(key);
+        if (fixed == null) {
+            int had = cloneWeight(base);
+            fixed = cloneWithAxis(base, wght);
+            if (fixed == null) fixed = base;
+            else {
+                own(fixed, wght);
+                logOnce("rebake:" + key, "rebake " + had + "->" + wght);
+            }
+            sFixed.put(key, fixed);
+        }
+        return fixed;
     }
 
     /**
@@ -2374,6 +2443,7 @@ public final class Core {
         if (now - sCfgTs < 2000) return;
         sCfgTs = now;
         int prevLockDateW = sLockDateW;
+        int prevClockW = sClockW;
         Context c = sCtx;
         if (c == null) { ctxViaActivityThread(); c = sCtx; }
         if (c == null) return;
@@ -2407,37 +2477,76 @@ public final class Core {
         // remote prefs overlay Settings.System; each key wins only when actually present,
         // so an empty remote store never shadows the adb-tunable hf_ff_* keys.
         SharedPreferences sp = sRemote;
-        if (sp == null) return;
+        if (sp != null) {
+            try {
+                // Read the whole map instead of getInt(key, current): some framework
+                // remote stores answer 0 for a key they do not hold, which silently
+                // zeroed hf_ff_log (and could zero any weight) on every refresh.
+                java.util.Map<String, ?> all = sp.getAll();
+                if (all != null && !all.isEmpty()) {
+                    sEnable = intOf(all, "enable", sEnable ? 1 : 0) != 0;
+                    sClockW = intOf(all, "clock", sClockW);
+                    sNetW = intOf(all, "network", sNetW);
+                    sCarrierW = intOf(all, "carrier", sCarrierW);
+                    sBatteryW = intOf(all, "battery", sBatteryW);
+                    sMarkW = intOf(all, "mark", sMarkW);
+                    sHollowW = intOf(all, "hollow", sHollowW);
+                    sDateW = intOf(all, "date", sDateW);
+                    sIslandW = intOf(all, "island", sIslandW);
+                    sOtherW = intOf(all, "other", sOtherW);
+                    sSpeedW = intOf(all, "speed", sSpeedW);
+                    sAlarmW = intOf(all, "alarm", sAlarmW);
+                    sLockDateW = intOf(all, "lockdate", sLockDateW);
+                    sSingleCarrier = intOf(all, "singlecarrier", sSingleCarrier ? 1 : 0) != 0;
+                    sFamily = intOf(all, "family", sFamily ? 1 : 0) != 0;
+                    sG1 = intOf(all, "g1", sG1 ? 1 : 0) != 0;
+                    sGlobalW = intOf(all, "global", sGlobalW);
+                    sAll = intOf(all, "all", sAll);
+                    sCallerVeto.clear();
+                    sAod = intOf(all, "aod", sAod ? 1 : 0) != 0;
+                    int lv2 = intOf(all, "log", sLogVerbose ? 2 : (sLog ? 1 : 0));
+                    sLog = lv2 != 0;
+                    sLogVerbose = lv2 >= 2;
+                    maybeDropLockDateVerdicts(prevLockDateW);
+                }
+            } catch (Throwable ignored) { }
+        }
+        if (sClockW != prevClockW) reweightClocks();
+    }
+
+    /**
+     * The status bar clock is only re-fed a Typeface by the ROM on a theme or font
+     * change, so after a live weight change it would keep its old baked face until the
+     * view happens to redraw - and during the shade pull-down it then disagrees with
+     * the header clock, which the ROM re-types every frame. Walk the views we already
+     * own as CLOCK on the UI thread and re-bake them immediately.
+     */
+    private static void reweightClocks() {
         try {
-            // Read the whole map instead of getInt(key, current): some framework
-            // remote stores answer 0 for a key they do not hold, which silently
-            // zeroed hf_ff_log (and could zero any weight) on every refresh.
-            java.util.Map<String, ?> all = sp.getAll();
-            if (all == null || all.isEmpty()) return;
-            sEnable = intOf(all, "enable", sEnable ? 1 : 0) != 0;
-            sClockW = intOf(all, "clock", sClockW);
-            sNetW = intOf(all, "network", sNetW);
-            sCarrierW = intOf(all, "carrier", sCarrierW);
-            sBatteryW = intOf(all, "battery", sBatteryW);
-            sMarkW = intOf(all, "mark", sMarkW);
-            sHollowW = intOf(all, "hollow", sHollowW);
-            sDateW = intOf(all, "date", sDateW);
-            sIslandW = intOf(all, "island", sIslandW);
-            sOtherW = intOf(all, "other", sOtherW);
-            sSpeedW = intOf(all, "speed", sSpeedW);
-            sAlarmW = intOf(all, "alarm", sAlarmW);
-            sLockDateW = intOf(all, "lockdate", sLockDateW);
-            sSingleCarrier = intOf(all, "singlecarrier", sSingleCarrier ? 1 : 0) != 0;
-            sFamily = intOf(all, "family", sFamily ? 1 : 0) != 0;
-            sG1 = intOf(all, "g1", sG1 ? 1 : 0) != 0;
-            sGlobalW = intOf(all, "global", sGlobalW);
-            sAll = intOf(all, "all", sAll);
-            sCallerVeto.clear();
-            sAod = intOf(all, "aod", sAod ? 1 : 0) != 0;
-            int lv2 = intOf(all, "log", sLogVerbose ? 2 : (sLog ? 1 : 0));
-            sLog = lv2 != 0;
-            sLogVerbose = lv2 >= 2;
-            maybeDropLockDateVerdicts(prevLockDateW);
+            new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+                @Override public void run() {
+                    java.util.ArrayList<TextView> tvs = new java.util.ArrayList<TextView>(4);
+                    synchronized (sRoles) {
+                        for (Map.Entry<View, Integer> e : sRoles.entrySet()) {
+                            if (e.getValue().intValue() != ROLE_CLOCK
+                                    || !(e.getKey() instanceof TextView)) continue;
+                            TextView tv = (TextView) e.getKey();
+                            // Only the chrome the draw hook already re-faces; the
+                            // lock-screen clock faces animate their own axis and must
+                            // not be given a constant-axis setTypeface.
+                            if (drawFaceAllowed(tv, ROLE_CLOCK)) tvs.add(tv);
+                        }
+                    }
+                    for (int i = 0; i < tvs.size(); i++) {
+                        TextView tv = tvs.get(i);
+                        forceTypeface(tv, sClockW, "cfg");
+                        tv.invalidate();
+                    }
+                    if (sLog && tvs.size() > 0) {
+                        log("cfg clock=" + sClockW + " reweighted " + tvs.size() + " view(s)");
+                    }
+                }
+            });
         } catch (Throwable ignored) { }
     }
 
