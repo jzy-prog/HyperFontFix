@@ -15,8 +15,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.hyperfontfix.module.BuildConfig
 import kotlin.math.roundToInt
@@ -99,18 +101,15 @@ fun SettingsScreen(store: SettingsStore) {
                     WeightSlider("网速", "网速数字与单位", config.value.speed, online,
                         onChange = { config.value = config.value.copy(speed = it) },
                         onCommit = { store.putInt(HfKeys.SPEED, config.value.speed) })
-                    WeightSlider("电量数字", "电池百分比数字", config.value.battery, online,
+                    WeightSlider("外显电量数字", "电池百分比数字", config.value.battery, online,
                         onChange = { config.value = config.value.copy(battery = it) },
                         onCommit = { store.putInt(HfKeys.BATTERY, config.value.battery) })
-                    WeightSlider("电量百分号", "电池 % 符号", config.value.mark, online,
+                    WeightSlider("外显电量百分号", "电池 % 符号", config.value.mark, online,
                         onChange = { config.value = config.value.copy(mark = it) },
                         onCommit = { store.putInt(HfKeys.MARK, config.value.mark) })
-                    WeightSlider("空心电量", "空心电池图标内的数字", config.value.hollow, online,
+                    WeightSlider("内显电量", "空心电池图标内的数字", config.value.hollow, online,
                         onChange = { config.value = config.value.copy(hollow = it) },
                         onCommit = { store.putInt(HfKeys.HOLLOW, config.value.hollow) })
-                    WeightSlider("状态栏日期", "默认不修改，0 = 保持系统原样", config.value.date, online,
-                        onChange = { config.value = config.value.copy(date = it) },
-                        onCommit = { store.putInt(HfKeys.DATE, config.value.date) })
                 }
             }
 
@@ -120,7 +119,7 @@ fun SettingsScreen(store: SettingsStore) {
                     WeightSlider("锁屏日期", "与状态栏日期独立设置", config.value.lockdate, online,
                         onChange = { config.value = config.value.copy(lockdate = it) },
                         onCommit = { store.putInt(HfKeys.LOCKDATE, config.value.lockdate) })
-                    WeightSlider("闹钟倒计时", "锁屏闹钟与倒计时", config.value.alarm, online,
+                    WeightSlider("闹钟", "锁屏闹钟", config.value.alarm, online,
                         onChange = { config.value = config.value.copy(alarm = it) },
                         onCommit = { store.putInt(HfKeys.ALARM, config.value.alarm) })
                     SwitchPreference(
@@ -142,6 +141,9 @@ fun SettingsScreen(store: SettingsStore) {
                     WeightSlider("超级岛", "默认不修改，0 = 保持系统原样", config.value.island, online,
                         onChange = { config.value = config.value.copy(island = it) },
                         onCommit = { store.putInt(HfKeys.ISLAND, config.value.island) })
+                    WeightSlider("控制中心日期", "默认不修改，0 = 保持系统原样", config.value.date, online,
+                        onChange = { config.value = config.value.copy(date = it) },
+                        onCommit = { store.putInt(HfKeys.DATE, config.value.date) })
                     WeightSlider("未分类文本", "其他状态栏文字，默认不修改", config.value.other, online,
                         onChange = { config.value = config.value.copy(other = it) },
                         onCommit = { store.putInt(HfKeys.OTHER, config.value.other) })
@@ -267,10 +269,14 @@ private fun SectionTitle(text: String) {
 
 @Composable
 private fun BridgeStatus(bridge: HfBridge?) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Text(
             text = if (bridge != null) "已连接系统服务" else "未连接系统服务",
             style = MiuixTheme.textStyles.body1,
+            textAlign = TextAlign.Center,
         )
         Text(
             text = if (bridge != null) {
@@ -280,6 +286,7 @@ private fun BridgeStatus(bridge: HfBridge?) {
             },
             style = MiuixTheme.textStyles.footnote1,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            textAlign = TextAlign.Center,
         )
     }
 }
