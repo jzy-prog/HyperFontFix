@@ -8,7 +8,7 @@
 | 运行环境 | LSPosed（`xposed` 入口）或 libxposed（`java_init.list`，API 101），需要已 root                      |
 | 作用域  | 仅 `com.android.systemui` 一个进程                                                           |
 | 实测机型 | 小米17(pudding) / HyperOS 4.0.0.32.XPCCNXM.D01 Beta / Android 17 / SDK 37（2026-10），其他版本未测 |
-| 配置方式 | `Settings.System` 的 `hf_ff_*` 键，热生效；除了第一次安装并启用时，无需重启 SystemUI                           |
+| 配置方式 | 应用内设置界面（1.4.0 起）或 `Settings.System` 的 `hf_ff_*` 键，热生效；除了第一次安装并启用时，无需重启 SystemUI                           |
 | 不做的事 | 不改字体文件、不改 `fonts.xml`、不用伪粗体（fakeBold）、默认不改文案与显示内容 —— 唯一会「少显示一块文字」的是需要你自己打开的 `hf_ff_singlecarrier`（§3.3 / §5.7） |
 
 ---
@@ -56,15 +56,16 @@ HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它
 
 前置条件：已 root，装了 LSPosed（或 libxposed 系框架，如 LSPosed 的 modern API 分支）。**不需要**元模块、不需要 Font Loader、不读写系统分区。
 
-1. 安装 `HyperFontFix-v1.3.0.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
+1. 安装 `HyperFontFix-v1.4.0.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
 2. 打开 LSPosed → 模块 → 启用 HyperFontFix，作用域只勾 **System UI（`com.android.systemui`）**（模块自带 scope 声明，正常只会列出这一个）；
 3. **重启一次SystemUI**。这是唯一必须重启的一步：注入只发生在进程启动时；
 4. 之后在主题商店应用你的第三方可变字体，状态栏那几处应该已经回到原生观感；
-5. 验证：
+5. 需要调整字重时，直接打开桌面上的 **HyperFontFix** 应用：界面会显示系统服务连接状态，拖动滑杆即时生效（见 §3.8）；
+6. 验证：
 
 ```bash
 adb logcat -s HyperFontFix | head
-# 期望看到：v1.3.0 PER-ROLE installed, hooks=... clock=500 net=660 carrier=430 ... speed=900 alarm=500 lockdate=400 singlecarrier=0
+# 期望看到：v1.4.0 PER-ROLE installed, hooks=... clock=500 net=660 carrier=430 ... speed=900 alarm=500 lockdate=400 singlecarrier=0
 ```
 
 没有这一行就是没注入成功，回去检查作用域和模块开关；有这一行但某处还是偏细，跳到 §3.7 排查。
@@ -74,6 +75,8 @@ adb logcat -s HyperFontFix | head
 ### 3.2 配置放在哪里
 
 全部配置都是 `Settings.System` 里的整型键，前缀 `hf_ff_`。SystemUI 在绘制路径上按 2 秒节流重读一次，所以**写完就生效，不需要重启、不需要重启 SystemUI、不需要重新激活模块**。
+
+1.4.0 起也可以直接打开桌面上的 **HyperFontFix** 应用配置：界面通过 libxposed 的 service API 写入名为 `hyperfontfix` 的 remote preference store，键名是下表去掉 `hf_ff_` 前缀的同名键，**优先级高于 `Settings.System`**。界面顶部会显示服务连接状态；显示「未连接系统服务」时只读、不能保存（通常是模块未在 LSPosed 中启用，或框架不提供 service API）。「恢复默认设置」会把下表默认值写入 remote store；之后 adb 的 `hf_ff_*` 会被 remote store 里的同名键遮住，需要时请用界面修改，或清空该 store。
 
 ```bash
 adb shell settings get  system hf_ff_clock          # 看当前值（null = 用模块内置默认）
@@ -179,7 +182,7 @@ adb logcat -s HyperFontFix
 
 | 日志行 | 说明 |
 | ---- | ---- |
-| `v1.3.0 PER-ROLE installed, hooks=N clock=... net=... speed=... alarm=... lockdate=... singlecarrier=...` | 注入成功 + 当前全部配置快照。**没有这一行 = 模块根本没进 SystemUI**，先去 LSPosed 查作用域 |
+| `v1.4.0 PER-ROLE installed, hooks=N clock=... net=... speed=... alarm=... lockdate=... singlecarrier=...` | 注入成功 + 当前全部配置快照。**没有这一行 = 模块根本没进 SystemUI**，先去 LSPosed 查作用域 |
 | `SELFTEST file=... AXIS_TF=true AXIS_PAINT=false` | 三条写入通道的自证结果，判断「是不是字体文件路径没找到」 |
 | `T11 face 660 -> XxxView` | 绘制期确实给这个控件换上了 Typeface |
 | `T11 face refused XxxView` | 当前字体含 `HVAR`/`MVAR`，绘制期覆写自动跳过（防重排） |
@@ -195,9 +198,16 @@ adb logcat -s HyperFontFix
 
 所有日志都做了同类去重 / 时间限流，开到 `2` 也不会刷屏；排查完 `settings put system hf_ff_log 0`。
 
-### 3.8 给将来的 GUI 留的口子
+### 3.8 应用内设置界面（1.4.0 起）
 
-在 libxposed 框架上（框架声明 `PROP_CAP_REMOTE` 时），模块还会监听一个名为 `hyperfontfix` 的 remote preference store：键名是去掉 `hf_ff_` 前缀的同名键（`clock` / `network` / `carrier` / `lockdate` / `singlecarrier` / `enable` / `log` …），任一项变化立刻热加载，**优先级高于 `Settings.System`**。所以下一版图形化配置界面不需要改注入逻辑，写这个 store 就行。
+桌面上的 HyperFontFix 就是配置界面，基于 [Miuix](https://github.com/compose-miuix-ui/miuix)（Compose Multiplatform）构建。它不参与注入，只做两件事：通过 libxposed service API 拿到 `hyperfontfix` remote preference store 的读写句柄，然后按 §3.3 的键写入整型值；SystemUI 侧的 remote 监听器收到变化后立即热加载，**不需要重启系统界面**。
+
+- 界面顶部显示框架名称 / 版本 / service API 版本，未连接时所有控件置灰；
+- 滑杆按 10 为步进，`0` 显示为「关闭」，写入也是 `0`；
+- 「恢复默认设置」写入全部默认值，不会改动 `Settings.System`；
+- 总开关对应 `enable`；高级区里的 `family` / `g1` / `all` / `aod` 与命令行含义完全一致（§3.3）。
+
+服务 binder 由框架投递给模块 APK 内由 libxposed service AAR 声明的 `com.hyperfontfix.module.XposedService` provider。如果界面一直显示未连接，先确认 LSPosed 里模块已启用、作用域已勾选 System UI，然后重新打开应用；旧版框架若不支持 service API，界面无法保存配置，仍可用上文的 adb 命令。
 
 ## 4. 为什么换了字体会变细
 
@@ -355,31 +365,38 @@ mLunarCalendarInfo.setTypeface(dark ? tm : t);       // 农历行，和日期同
 
 ## 7. 自己构建
 
-不用 Gradle：`tools/build_v4.ps1`（PowerShell + 本地 JDK）完成 javac → r8 → aapt2 → zip 塞入 → **resources.arsc 对齐** → apksig 签名 → 签名校验 + 结构自检，一条命令：
+1.4.0 起用 **Gradle + AGP** 构建：设置界面是 Kotlin / Compose（Miuix），原来的 javac → r8 → aapt2 脚本只认 Java，无法再产出完整 APK。
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\build_v4.ps1 -Ver 1.3.0
-# 产物：HyperFontFix-v1.3.0.apk
+需要：
+
+| 依赖 | 版本 / 说明 |
+| ---- | ---- |
+| JDK | 21 |
+| Android SDK Platform | `platforms;android-37.0`（Miuix 的 AAR 要求 `minCompileSdk=37`） |
+| Android Build Tools | `37.0.0` |
+| Gradle | 9.8.2（或直接用 Android Studio 打开仓库根目录） |
+
+```bash
+export JAVA_HOME=/path/to/jdk-21
+# Windows Git Bash 下 TMP/TEMP/GRADLE_USER_HOME 必须用 Windows 路径，否则 Gradle 的原生库加载失败
+export GRADLE_USER_HOME="$PWD/.gradle-home" TMP="$(cygpath -w "$PWD/tmp")" TEMP="$(cygpath -w "$PWD/tmp")"
+
+./gradlew :module:assembleRelease
+# 产物：module/build/outputs/apk/release/module-release.apk
 ```
 
-脚本按仓库相对路径推导工作目录，但工具链**不入库**（体积 / 许可原因），需要自备并放到约定位置：
+仓库自带 Gradle Wrapper，默认分发地址是腾讯云镜像（官方 `services.gradle.org` 在国内经常拉不动）；也可以直接用本机的 Gradle 9.8.2 运行 `gradle :module:assembleRelease`。
 
-| 需要的东西 | 放置路径 | 用途 |
-| ---- | ---- | ---- |
-| JDK 21（含 `javac`/`jar`/`java`） | `tools/jdk/jdk-21.0.12.1+1/bin/` | 编译、打包、跑 r8 |
-| Android `android.jar`（API 34） | `tools/sdk/android-34/android.jar` | `-bootclasspath` |
-| `aapt2.exe` | `tools/aapt2/aapt2.exe` | 编译 / 链接 `res` 与 manifest |
-| `r8.jar` | `tools/jars/r8.jar` | dex 化 + 按 `keep3.pro` 保留入口 |
-| Xposed 传统 API | `tools/jars/xposed-api-82.jar` | `de.robv.android.xposed` 入口 |
-| libxposed API | `refs/libxposed/api-102.0.0-classes.jar` | `io.github.libxposed.api` 入口（Maven 中央仓库可取） |
-| apksig | `tools/jars/apksig-8.1.4.jar` | 签名（`tools/signsrc/SignApk.java` 是它的小包装，脚本会自动编译） |
-| 签名密钥 | `tools/debug.keystore`（alias `hf`） | 自带的是 debug key，自行发布请换成自己的 |
+版本号在 `module/build.gradle.kts` 的 `versionCode` / `versionName`；签名沿用入库的 `tools/debug.keystore`（alias `hf`，密码 `android`），自己发布请换成自己的密钥。`local.properties` 的 `sdk.dir` 指向本机 SDK，不入库。
 
-`module/` 下只有三个源文件（`Core.java` 是全部逻辑）、唯一的 manifest 和 `assets/xposed_init`；`META-INF/xposed/{module.prop,java_init.list,scope.list}` 由脚本生成，作用域固定 `com.android.systemui`。
+`module/` 目录结构：
 
-**`tools/signsrc/AlignApk.java` 那一步不能省，也不要指望去掉。** 从 Android 11 起，只要 `targetSdk >= 30`，包里 `resources.arsc` 若不是「未压缩 + 起始偏移 4 字节对齐」，安装阶段就直接判死：`INSTALL_PARSE_FAILED_RESOURCES_ARSC_COMPRESSED = -124`，HyperOS 的文案是「该安装包与您的系统不兼容」。这一步做的事情和 `zipalign` 一样 —— 把每个条目本地头的 `extra` 字段加长到对齐边界，条目内容一个字节都不动 —— 只是不需要多带一个 SDK 工具；而且**必须排在签名之前**，签名块是插在最后一个条目之后的，签完再动偏移等于把签名作废。
+- `src/hf/fontfix/*.java`：注入逻辑（`Core.java` 是全部 hook），传统 `xposed_init` 入口在 `assets/xposed_init`；
+- `src/main/kotlin/hf/fontfix/ui/`：Miuix 设置界面与 remote prefs 读写；
+- `AndroidManifest.xml` + `res/`：应用入口、主题、图标；
+- `resources/META-INF/xposed/{module.prop,java_init.list,scope.list}`：现代 API 元数据，作用域固定 `com.android.systemui`。
 
-这一步是 v1.1 现场补上的：之前 `resources.arsc` 恰好落在对齐位置（纯属运气），版本号从 `1.0-alpha` 缩成 `1.1` 之后清单短了 7 字节，arsc 跟着错开 7 字节，干净系统的安装全挂。`tools/verify_v4.py` 现在每次构建都会打印 arsc 的偏移与 `mod 4`，这条不变量从此可看见。
+`tools/build_v4.ps1` 是 1.3.0 及更早的旧构建脚本，仅保留作历史参考 —— 它只编译 `module/src/hf/fontfix/*.java`，编不了 Kotlin 界面，不要再用它发布。resources.arsc 的 4 字节对齐现在由 AGP / zipalign 自动完成。
 
 ## 8. 许可
 

@@ -1,3 +1,8 @@
+# SUPERSEDED by Gradle (module/build.gradle.kts). Since 1.4.0 the module ships a
+# Kotlin/Compose settings UI, which this javac-only script cannot compile; keeping
+# it only as a reference for the pre-GUI packaging steps. Use:
+#   gradle :module:assembleRelease
+#
 # Build HyperFontFix v4.0 without Gradle/Android Studio.
 # stubs -> javac -> r8 -> aapt2 link -> zip stage -> apksig sign -> verify.
 # Kept under its v4 name so the previously approved command line keeps working;

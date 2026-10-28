@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.HyperFontFix" parent="android:Theme.Material.NoActionBar" />
+</resources>

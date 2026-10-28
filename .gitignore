@@ -1,5 +1,10 @@
 # ---- build output ----------------------------------------------------
 module/build/
+build/
+.gradle/
+.gradle-home/
+tmp/
+local.properties
 *.apk
 *.dex
 
@@ -12,6 +17,8 @@ __pycache__/
 tools/jdk/
 tools/jre/
 tools/sdk/
+tools/android-sdk/
+tools/gradle/
 tools/aapt2/
 tools/adb/
 tools/jars/

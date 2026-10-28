@@ -837,7 +837,7 @@ public final class Core {
         } catch (Throwable t) { log("T15 fail: " + t); }
 
         refreshCfg();
-        log("v1.3.0 PER-ROLE installed, hooks=" + n
+        log("v1.4.0 PER-ROLE installed, hooks=" + n
                 + " clock=" + sClockW + " net=" + sNetW + " carrier=" + sCarrierW
                 + " batt=" + sBatteryW + " mark=" + sMarkW + " hollow=" + sHollowW
                 + " date=" + sDateW + " island=" + sIslandW + " other=" + sOtherW
