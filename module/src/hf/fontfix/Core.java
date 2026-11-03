@@ -118,6 +118,29 @@ public final class Core {
      * with hf_ff_lockdate set than with it at 0.
      */
     private static final int ROLE_LOCKDATE = 11;
+    /**
+     * The tiny digit that sits on the status-bar WiFi icon and says which generation the
+     * connection is (Wi-Fi 6 / 7). It IS text, not icon artwork:
+     * res/layout/status_bar_wifi_group_inner.xml line 30 declares
+     * com.android.systemui.statusbar.AlphaOptimizedTextView@id/wifi_standard
+     * (0x7f0b0dc2, textAppearance style/TextAppearance.StatusBar.WifiStandard) inside the
+     * wifi_group FrameLayout, and MiuiWifiViewBinder writes the number with
+     * setText(String.valueOf(generation)) - visibility GONE when there is nothing to say.
+     * The face comes from MiuiConfigs.setMiuiStatusBarWifiTypeface(TextView[])
+     * (smali line 1744): it asks Typeface.create("mipro-bold", 0) and only swaps in the
+     * baked sFontWght660 ("'wght' 660" off FONT_MIPRO_PATH) when the resolved familyName
+     * still startsWith "mipro". Under a theme font that test fails, so the themed face at
+     * its fvar default lands on the TextView - the same failure mode as the 4G/5G label,
+     * and the reason this digit stayed thin through v1.4.0. It never passes through
+     * applyStatusBarTypeface, so T1 cannot see it: the role is claimed by resource entry
+     * name (T11 fallback) and re-asserted at the ROM's own write point (T16).
+     * One ModernStatusBarWifiView instance (IconManager) serves the status bar AND the
+     * keyguard status bar, so a single hook covers both. The control-centre / QS WiFi row
+     * is NOT this widget: it picks drawable/qs_detail_wifi_6_signal_0..3 (MiuiWifiIcons
+     * QS_WIFI_6_FULL_ICONS), where the digit is baked into the vector artwork and no font
+     * weight can reach it.
+     */
+    private static final int ROLE_WIFI = 12;
 
     /**
      * Class-name patterns that are NOT status-bar text and must keep their own
@@ -217,11 +240,19 @@ public final class Core {
      */
     static final int DEFAULT_ALARM = 500;
     /**
-     * 0 = leave the lock-screen date alone, which is what every version up to v1.2
-     * did. The ROM asks for regular (400), or 500 while the clock uses dark text, so
-     * 400 is the value that reproduces the stock look once a theme font is applied.
+     * hf_ff_lockdate: the ROM's own value at this widget is 400 (the dead
+     * "mipro-regular" alias resolves to the default family's regular cut), and 500 when
+     * the wallpaper needs dark text (Typeface.create("mipro-medium", 0) = sans-serif 500).
+     * Since v1.4.1 the shipped default is 500: with a theme font the date line sits right
+     * under clock digits at 500, and 400 read as thin next to them. 0 still means
+     * "do not touch this at all".
      */
-    static final int DEFAULT_LOCKDATE = 400;
+    static final int DEFAULT_LOCKDATE = 500;
+    /**
+     * hf_ff_wifi: the Wi-Fi generation digit on the status-bar icon. 660 is what the ROM
+     * itself asks for there (MiuiConfigs.sFontWght660), same slot the 4G/5G label uses.
+     */
+    static final int DEFAULT_WIFI = 660;
     /** com.miui.aod is out of scope now; hf_ff_aod=1 re-enables it for experiments. */
     static final int DEFAULT_AOD = 0;
     /**
@@ -277,6 +308,7 @@ public final class Core {
     private static volatile int sSpeedW = DEFAULT_SPEED;
     private static volatile int sAlarmW = DEFAULT_ALARM;
     private static volatile int sLockDateW = DEFAULT_LOCKDATE;
+    private static volatile int sWifiW = DEFAULT_WIFI;
     /** 1 = let H0a/H0b/H0c rewrite mipro-* family resolution process-wide (off default). */
     private static volatile boolean sFamily = DEFAULT_FAMILY != 0;
     /** 1 = let G1 rewrite MiuiConfigs.getMiProTypefaceWght460 for every caller. */
@@ -844,14 +876,45 @@ public final class Core {
             n++;
         } catch (Throwable t) { log("T15 fail: " + t); }
 
+        // ---------- T16: WiFi generation digit at the ROM's own write point ----------
+        // MiuiConfigs.setMiuiStatusBarWifiTypeface(TextView[]) is the only place the WiFi
+        // badge gets a Typeface (MiuiWifiViewBinder binds id/wifi_standard), and it asks
+        // for the baked sFontWght660 through Typeface.create("mipro-bold"), i.e. it is
+        // invisible to T1. Re-asserting here covers the frame that the binder paints
+        // straight away; the draw-time authority for this view is T11 via the resource
+        // entry name, which also catches every later theme / textAppearance rewrite.
+        try {
+            Class<?> mc = sMcClass != null ? sMcClass : XposedHelpers.findClass(MIUI_CONFIGS, cl);
+            XposedHelpers.findAndHookMethod(mc, "setMiuiStatusBarWifiTypeface",
+                    TextView[].class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            refreshCfg();
+                            if (!sEnable) return;
+                            TextView[] tvs = (TextView[]) p.args[0];
+                            if (tvs == null) return;
+                            for (int i = 0; i < tvs.length; i++) {
+                                TextView tv = tvs[i];
+                                if (tv == null) continue;
+                                if (viewExcluded(tv)) { sRoles.put(tv, Integer.valueOf(ROLE_ISLAND)); continue; }
+                                sRoles.put(tv, Integer.valueOf(ROLE_WIFI));
+                                int w = wghtFor(ROLE_WIFI);
+                                if (w <= 0) { skipped(tv, ROLE_WIFI); continue; }
+                                forceTypeface(tv, w, "T16");
+                            }
+                        }
+                    });
+            n++;
+        } catch (Throwable t) { log("T16 fail: " + t); }
+
         refreshCfg();
-        log("v1.4.0 PER-ROLE installed, hooks=" + n
+        log("v1.4.1 PER-ROLE installed, hooks=" + n
                 + " clock=" + sClockW + " net=" + sNetW + " carrier=" + sCarrierW
                 + " batt=" + sBatteryW + " mark=" + sMarkW + " hollow=" + sHollowW
                 + " date=" + sDateW + " island=" + sIslandW + " other=" + sOtherW
                 + " speed=" + sSpeedW
                 + " alarm=" + sAlarmW
                 + " lockdate=" + sLockDateW
+                + " wifi=" + sWifiW
                 + " singlecarrier=" + (sSingleCarrier ? 1 : 0)
                 + " family=" + (sFamily ? 1 : 0) + " g1=" + (sG1 ? 1 : 0)
                 + " global=" + sGlobalW + " all=" + sAll
@@ -944,6 +1007,11 @@ public final class Core {
         // is a Chronometer, so without this draw-time gate it would be allowed only
         // by coincidence of a class name and then stamped by an inapplicable weight.
         if (role == ROLE_CARRIER || role == ROLE_SPEED || role == ROLE_ALARM) return true;
+        // The WiFi digit is AlphaOptimizedTextView@id/wifi_standard: the role can only
+        // have come from that exact resource entry name (or from T16, the ROM's own
+        // setMiuiStatusBarWifiTypeface write point), never from a class name, so this
+        // cannot open a clock face.
+        if (role == ROLE_WIFI) return true;
         // The lock-screen date is a plain TextView inside a clock face, i.e. exactly the
         // combination this guard exists to refuse. It gets in on its own role, which is
         // only ever assigned to a view whose resource entry name says "date" AND whose
@@ -1841,7 +1909,7 @@ public final class Core {
         if (tag != null) {
             int t = tag.intValue();
             if (t == ROLE_MARK || t == ROLE_BATTERY || t == ROLE_CLOCK
-                    || t == ROLE_NET || t == ROLE_CARRIER) return t;
+                    || t == ROLE_NET || t == ROLE_CARRIER || t == ROLE_WIFI) return t;
         }
         // The SAME baked slot (sMiproTypefaceWght500) is reused by the keyguard and the
         // always-on-display status bar, so the static is a stronger signal than a class
@@ -1964,6 +2032,10 @@ public final class Core {
             String ln = n == null ? null : n.toLowerCase();
             if (ln != null && ln.indexOf("carrier") >= 0) r = ROLE_CARRIER;
             else if (ln != null && ln.indexOf("network_speed") >= 0) r = ROLE_SPEED;
+            // WiFi generation digit on the icon. Whole entry name, not a substring:
+            // "wifi" alone would also claim the QS / control-centre WiFi labels, which
+            // are not the status-bar badge (and the QS one is vector artwork anyway).
+            else if ("wifi_standard".equals(ln)) r = ROLE_WIFI;
             // Full name, not a substring: "alarm" alone would also catch
             // id/dream_overlay_alarm_set and id/zen_alarm_warning, which are not the
             // keyguard status bar and never asked for 500.
@@ -2055,6 +2127,7 @@ public final class Core {
             case ROLE_SPEED: return "speed";
             case ROLE_ALARM: return "alarm";
             case ROLE_LOCKDATE: return "lockdate";
+            case ROLE_WIFI: return "wifi";
             case ROLE_MARK: return "mark";
             case ROLE_HOLLOW: return "hollow";
             case ROLE_DATE: return "date";
@@ -2142,6 +2215,7 @@ public final class Core {
             case ROLE_SPEED: return sSpeedW;
             case ROLE_ALARM: return sAlarmW;
             case ROLE_LOCKDATE: return sLockDateW;
+            case ROLE_WIFI: return sWifiW;
             case ROLE_BATTERY: return sBatteryW;
             case ROLE_MARK: return sMarkW;
             case ROLE_HOLLOW: return sHollowW;
@@ -2444,6 +2518,7 @@ public final class Core {
         sCfgTs = now;
         int prevLockDateW = sLockDateW;
         int prevClockW = sClockW;
+        int prevWifiW = sWifiW;
         Context c = sCtx;
         if (c == null) { ctxViaActivityThread(); c = sCtx; }
         if (c == null) return;
@@ -2461,6 +2536,7 @@ public final class Core {
             sSpeedW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_speed", DEFAULT_SPEED);
             sAlarmW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_alarm", DEFAULT_ALARM);
             sLockDateW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_lockdate", DEFAULT_LOCKDATE);
+            sWifiW = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_wifi", DEFAULT_WIFI);
             sSingleCarrier = android.provider.Settings.System.getInt(c.getContentResolver(),
                     "hf_ff_singlecarrier", DEFAULT_SINGLE) != 0;
             sFamily = android.provider.Settings.System.getInt(c.getContentResolver(), "hf_ff_family", DEFAULT_FAMILY) != 0;
@@ -2497,6 +2573,7 @@ public final class Core {
                     sSpeedW = intOf(all, "speed", sSpeedW);
                     sAlarmW = intOf(all, "alarm", sAlarmW);
                     sLockDateW = intOf(all, "lockdate", sLockDateW);
+                    sWifiW = intOf(all, "wifi", sWifiW);
                     sSingleCarrier = intOf(all, "singlecarrier", sSingleCarrier ? 1 : 0) != 0;
                     sFamily = intOf(all, "family", sFamily ? 1 : 0) != 0;
                     sG1 = intOf(all, "g1", sG1 ? 1 : 0) != 0;
@@ -2511,39 +2588,45 @@ public final class Core {
                 }
             } catch (Throwable ignored) { }
         }
-        if (sClockW != prevClockW) reweightClocks();
+        if (sClockW != prevClockW) reweightRole(ROLE_CLOCK, sClockW, "cfg");
+        // The WiFi generation digit only gets a Typeface when the binder runs, i.e. on a
+        // theme / font change or a network transition, so a slider move would otherwise
+        // wait for the next connection to show up.
+        if (sWifiW != prevWifiW) reweightRole(ROLE_WIFI, sWifiW, "cfg");
     }
 
     /**
-     * The status bar clock is only re-fed a Typeface by the ROM on a theme or font
-     * change, so after a live weight change it would keep its old baked face until the
-     * view happens to redraw - and during the shade pull-down it then disagrees with
-     * the header clock, which the ROM re-types every frame. Walk the views we already
-     * own as CLOCK on the UI thread and re-bake them immediately.
+     * Re-bake every view we already claimed as this role, on the UI thread, right after a
+     * live weight change. Needed because some widgets are only re-fed a Typeface by the ROM
+     * on a theme / font change: the status bar clock (during the shade pull-down it would
+     * otherwise disagree with the header clock, which the ROM re-types every frame) and the
+     * WiFi generation digit (only typed by MiuiWifiViewBinder). The invalidate() is what
+     * makes the very next frame carry the new face.
      */
-    private static void reweightClocks() {
+    private static void reweightRole(final int role, final int w, final String via) {
         try {
             new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
                 @Override public void run() {
                     java.util.ArrayList<TextView> tvs = new java.util.ArrayList<TextView>(4);
                     synchronized (sRoles) {
                         for (Map.Entry<View, Integer> e : sRoles.entrySet()) {
-                            if (e.getValue().intValue() != ROLE_CLOCK
+                            if (e.getValue().intValue() != role
                                     || !(e.getKey() instanceof TextView)) continue;
                             TextView tv = (TextView) e.getKey();
                             // Only the chrome the draw hook already re-faces; the
                             // lock-screen clock faces animate their own axis and must
                             // not be given a constant-axis setTypeface.
-                            if (drawFaceAllowed(tv, ROLE_CLOCK)) tvs.add(tv);
+                            if (drawFaceAllowed(tv, role)) tvs.add(tv);
                         }
                     }
                     for (int i = 0; i < tvs.size(); i++) {
                         TextView tv = tvs.get(i);
-                        forceTypeface(tv, sClockW, "cfg");
+                        forceTypeface(tv, w, via);
                         tv.invalidate();
                     }
                     if (sLog && tvs.size() > 0) {
-                        log("cfg clock=" + sClockW + " reweighted " + tvs.size() + " view(s)");
+                        log(via + " " + roleName(role) + "=" + w
+                                + " reweighted " + tvs.size() + " view(s)");
                     }
                 }
             });

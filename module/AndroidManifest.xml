@@ -18,7 +18,7 @@
             android:value="82" />
         <meta-data
             android:name="xposeddescription"
-            android:value="状态栏与锁屏字重修复：时钟/5G/运营商/电量/锁屏日期分角色可调，支持应用内设置" />
+            android:value="状态栏与锁屏字重修复：时钟/5G/WiFi代数/运营商/电量/锁屏日期分角色可调，支持应用内设置" />
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposed_scope" />

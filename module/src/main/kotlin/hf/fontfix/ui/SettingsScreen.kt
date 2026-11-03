@@ -95,6 +95,9 @@ fun SettingsScreen(store: SettingsStore) {
                     WeightSlider("网络标识", "4G / 5G 标签", config.value.network, online,
                         onChange = { config.value = config.value.copy(network = it) },
                         onCommit = { store.putInt(HfKeys.NETWORK, config.value.network) })
+                    WeightSlider("WiFi 代数", "WiFi 图标上的 6 / 7 小数字", config.value.wifi, online,
+                        onChange = { config.value = config.value.copy(wifi = it) },
+                        onCommit = { store.putInt(HfKeys.WIFI, config.value.wifi) })
                     WeightSlider("运营商", "状态栏运营商名称", config.value.carrier, online,
                         onChange = { config.value = config.value.copy(carrier = it) },
                         onCommit = { store.putInt(HfKeys.CARRIER, config.value.carrier) })

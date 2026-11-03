@@ -19,6 +19,7 @@
 
 - 状态栏时间、电量数字、4G/5G 标签、锁屏状态栏运营商名 —— 全比原生MiSans VF细；
 - 状态栏网速指示器（数字 + `KB/s` 单位）—— 原生在这一处要的是 `mipro-bold`（900），换字体之后这个数字同样会丢掉，只剩下系统合成出来的伪粗体，粗细都不对；
+- 状态栏 WiFi 图标上那个表示**第几代 WiFi**的小数字（`6` / `7`）—— 它是真文字而不是图标的一部分，原生要的是 `wght 660`，换字体后一样变细（1.4.1 起覆盖，见 §5.8）；
 - 临近闹钟设定时间时，锁屏状态栏上原本显示运营商名的位置会被**闹钟倒计时**占用（`还有 XX 分钟`），这块文字同样偏细；
 - 锁屏界面的**日期与农历行**：不是变细，而是压根不跟随主题字体 —— 换了字体它照旧是 MiSans；
 
@@ -28,7 +29,7 @@ HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它
 
 原因在 §5.6：每次锁屏 ROM 都会用 `Typeface.create("mipro-regular", 0)` 把这块文字重写一遍，而 `mipro-regular` 这个别名在 ROM 自己的字体配置里是**被注释掉的**，请求根本落不到主题字体上，于是它永远拿系统默认字体（MiSans）。
 
-1.3.0 起它不再靠副作用，而是和时钟、运营商并列的独立角色 `hf_ff_lockdate`，**默认 400**（= ROM 原值）：家族取自「确定正在使用主题字体的来源」（同一钟面的时间数字 → 主题落地的那个字体文件 → 进程默认家族），而不是把日期控件自己那张 MiSans 的 Typeface 重新烘一遍字重 —— 后者正是早期 v1.3 方案里「填了 `hf_ff_lockdate` 反而更像 MiSans」的原因。不想动它就 `settings put system hf_ff_lockdate 0`。
+1.3.0 起它不再靠副作用，而是和时钟、运营商并列的独立角色 `hf_ff_lockdate`，家族取自「确定正在使用主题字体的来源」（同一钟面的时间数字 → 主题落地的那个字体文件 → 进程默认家族），而不是把日期控件自己那张 MiSans 的 Typeface 重新烘一遍字重 —— 后者正是早期 v1.3 方案里「填了 `hf_ff_lockdate` 反而更像 MiSans」的原因。**默认字重从 1.4.1 起是 500**：ROM 在这一处普通态要的是 400（深色文字态才是 500），但日期那行就压在 500 的时钟数字下面，400 的主题字体看着明显偏细，所以出厂值改成了 500；嫌粗就往下调，不想动它 `settings put system hf_ff_lockdate 0`。
 
 ### 1.2 可选：锁屏只显示主卡运营商
 
@@ -56,7 +57,7 @@ HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它
 
 前置条件：已 root，装了 LSPosed（或 libxposed 系框架，如 LSPosed 的 modern API 分支）。**不需要**元模块、不需要 Font Loader、不读写系统分区。
 
-1. 安装 `HyperFontFix-v1.4.0.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
+1. 安装 `HyperFontFix-v1.4.1.apk`（在本仓库的 [Releases](https://github.com/jzy-prog/HyperFontFix/releases) 下载）；
 2. 打开 LSPosed → 模块 → 启用 HyperFontFix，作用域只勾 **System UI（`com.android.systemui`）**（模块自带 scope 声明，正常只会列出这一个）；
 3. **重启一次SystemUI**。这是唯一必须重启的一步：注入只发生在进程启动时；
 4. 之后在主题商店应用你的第三方可变字体，状态栏那几处应该已经回到原生观感；
@@ -65,7 +66,7 @@ HyperFontFix 只修这些状态栏文字，并且**保留你选的字体**：它
 
 ```bash
 adb logcat -s HyperFontFix | head
-# 期望看到：v1.4.0 PER-ROLE installed, hooks=... clock=500 net=660 carrier=430 ... speed=900 alarm=500 lockdate=400 singlecarrier=0
+# 期望看到：v1.4.1 PER-ROLE installed, hooks=... clock=500 net=660 carrier=430 ... speed=900 alarm=500 lockdate=500 wifi=660 singlecarrier=0
 ```
 
 没有这一行就是没注入成功，回去检查作用域和模块开关；有这一行但某处还是偏细，跳到 §3.7 排查。
@@ -94,13 +95,14 @@ adb shell settings put  system hf_ff_enable 0       # 临时整体停用（hook 
 | `hf_ff_enable` | `1` | 总开关 | `0` = 只保留注入，不改任何字重 |
 | `hf_ff_clock` | `500` | 状态栏时钟、下拉面板大时钟、锁屏时钟 | ROM 原值（pad 版是 460） |
 | `hf_ff_network` | `660` | 4G / 5G 网络类型标签 | 自绘 Drawable，走画笔通道 |
+| `hf_ff_wifi` | `660` | 状态栏 WiFi 图标上的代数小数字（`6` / `7`） | ROM 原值 `MiuiConfigs.sFontWght660`；控制中心顶部那一行就是状态栏同一套控件，会跟着一起变（§5.8） |
 | `hf_ff_carrier` | `430` | 状态栏 + 锁屏状态栏运营商名（含 `HD`、`+`） | ROM 原值 `sMiproTypeface` |
 | `hf_ff_battery` | `500` | 电量数字 | 按实例身份识别，不牵连别处的充电文字 |
 | `hf_ff_mark` | `600` | 电量的 `%` 号 | 与电量数字是两个不同 TextView |
 | `hf_ff_hollow` | `620` | 镂空电池图标内的数字 | `MiuiBatteryUtils.FONT_WGHT` |
 | `hf_ff_speed` | `900` | 状态栏网速指示器（数字 + 单位） | ROM 原值 `mipro-bold` → 900，会夹到你字体 `fvar` 的上限 |
 | `hf_ff_alarm` | `500` | 锁屏状态栏的闹钟倒计时（占用运营商位的那块文字） | ROM 原值：布局自带 `'wght' 500` + `sMiproTypefaceWght500` |
-| `hf_ff_lockdate` | `400` | **锁屏**日期 + 农历行 | ROM 原值（深色文字态原生是 500，见 §6）；`0` = 完全不碰这块 |
+| `hf_ff_lockdate` | `500` | **锁屏**日期 + 农历行 | ROM 普通态是 400、深色文字态 500；1.4.1 起出厂值取 500（见 §6）；`0` = 完全不碰这块 |
 | `hf_ff_date` | `0` | 控制中心 / 通知中心日期 | **默认 0：完全不碰**（锁屏日期是另一个键 `hf_ff_lockdate`，两者互不牵连） |
 | `hf_ff_island` | `0` | 超级岛**胶囊形态**的文字 | **默认 0：完全不碰**；展开态本来就不受影响 |
 | `hf_ff_other` | `0` | 其它流经 `applyStatusBarTypeface` 但没归类的文字 | **默认 0：完全不碰** |
@@ -152,8 +154,8 @@ adb shell settings put system hf_ff_speed 700
 # 锁屏闹钟倒计时（默认 500 = 原生）嫌重就调细，0 = 完全不动它
 adb shell settings put system hf_ff_alarm 430
 
-# 锁屏日期默认 400（= 原生字重，且改用主题字体）；嫌重往下调
-adb shell settings put system hf_ff_lockdate 360
+# 锁屏日期默认 500（ROM 深色文字态的原生值；普通态是 400）；嫌重往下调
+adb shell settings put system hf_ff_lockdate 400
 
 # 彻底不动锁屏日期：回到没修之前的样子（MiSans + 系统默认字重）
 adb shell settings put system hf_ff_lockdate 0
@@ -182,12 +184,13 @@ adb logcat -s HyperFontFix
 
 | 日志行 | 说明 |
 | ---- | ---- |
-| `v1.4.0 PER-ROLE installed, hooks=N clock=... net=... speed=... alarm=... lockdate=... singlecarrier=...` | 注入成功 + 当前全部配置快照。**没有这一行 = 模块根本没进 SystemUI**，先去 LSPosed 查作用域 |
+| `v1.4.1 PER-ROLE installed, hooks=N clock=... net=... wifi=... speed=... alarm=... lockdate=... singlecarrier=...` | 注入成功 + 当前全部配置快照。**没有这一行 = 模块根本没进 SystemUI**，先去 LSPosed 查作用域 |
 | `SELFTEST file=... AXIS_TF=true AXIS_PAINT=false` | 三条写入通道的自证结果，判断「是不是字体文件路径没找到」 |
 | `T11 face 660 -> XxxView` | 绘制期确实给这个控件换上了 Typeface |
 | `T11 face refused XxxView` | 当前字体含 `HVAR`/`MVAR`，绘制期覆写自动跳过（防重排） |
 | `id-role alarm for @alarm_display` | 类名零线索的控件靠资源名 / 父链认领成功（运营商、网速指示器同理） |
 | `id-role lockdate for @current_date` | 锁屏日期 / 农历行被认领（entry 名含 date + 父链含钟面） |
+| `id-role wifi for @wifi_standard` | WiFi 代数角标被认领（资源 entry 名精确等于 `wifi_standard`） |
 | `lockdate family source=T13 fam=…` / `lockdate family source=… refused …(stock=…)` | 锁屏日期的**家族**来源被采纳 / 被拒绝（拒绝原因：这个来源本身就是系统自带字体） |
 | `lockdate face source=clockface\|default … fam=… w=…` / `lockdate baked from … (theme file\|stock)` | 最终给锁屏日期装上的 Typeface 来自哪条通道、家族叫什么 —— 「日期还是 MiSans」只需看这一行 |
 | `carrier-layout @2131658214 keyguard=true` | 运营商控件容器被识别为锁屏那一个实例（需 `hf_ff_log 1`） |
@@ -260,7 +263,7 @@ lrwxrwxrwx Roboto-Light.ttf   -> /data/system/theme/fonts/Roboto-Regular.ttf
 
 ### 5.1 字重来源：一律抄 ROM 自己的作业
 
-默认值不是审美决定，而是 ROM 在这个位置的原始取值（从字节码调用点扫出来的）：时钟 500（pad 版 460）、4G/5G 660（`MobileTypeDrawable.<clinit>` 烘 `sMiproTypeface` 用的就是 `'wght' 660`）、运营商 430、电量数字 500、`%` 600、镂空电池 620（`MiuiBatteryUtils.FONT_WGHT`）、网速指示器 900、锁屏闹钟倒计时 500、锁屏日期 400（`Typeface.create("mipro-regular", 0)` 落到默认家族的 regular，§5.6）。**日期 / 超级岛 / 未分类文字默认 0 = 完全不动。**
+默认值不是审美决定，而是 ROM 在这个位置的原始取值（从字节码调用点扫出来的）：时钟 500（pad 版 460）、4G/5G 660（`MobileTypeDrawable.<clinit>` 烘 `sMiproTypeface` 用的就是 `'wght' 660`）、运营商 430、电量数字 500、`%` 600、镂空电池 620（`MiuiBatteryUtils.FONT_WGHT`）、网速指示器 900、锁屏闹钟倒计时 500、WiFi 代数角标 660（`MiuiConfigs.sFontWght660`，§5.8）、锁屏日期 400（`Typeface.create("mipro-regular", 0)` 落到默认家族的 regular，§5.6）。**日期 / 超级岛 / 未分类文字默认 0 = 完全不动。** 唯一的例外是锁屏日期：1.4.1 起出厂值改成 500，理由见 §6。
 
 网速指示器这一处的证据稍微特殊，因为它压根不经过 `MiuiConfigs`：`res/layout/network_speed.xml` 里的两个 TextView 只吃 `style/TextAppearance.StatusBar.NetWorkSpeedNumber`（`0x7f1506c2`）与 `...NetWorkSpeedUnit`（`0x7f1506c3`），两个样式都只声明 `fontFamily="mipro-bold"` + `textStyle=bold`，而 `/system/etc/fonts.xml` 把 `mipro-bold` 映射到 `sans-serif weight=900` —— 900 就是 ROM 在这里的字面请求值，也是本模块 `hf_ff_speed` 的默认值。它走的是「别名」而不是烘好的 Typeface，主题字体下别名只剩一个家族名、数字全部丢失，`textStyle=bold` 则退化成系统自己补的伪粗体；模块仍然用同一条通道修它：绘制期换成从当前字体文件重新烘出来的真轴实例，同时关掉伪粗体。
 
@@ -268,13 +271,13 @@ lrwxrwxrwx Roboto-Light.ttf   -> /data/system/theme/fonts/Roboto-Regular.ttf
 
 ### 5.2 先命中，再改重
 
-模块内把系统栏文字归成角色：`clock / network / carrier / battery / mark / hollow / speed / alarm / lockdate / date / island / other`，每个角色一个字重键。命中一个控件有三条路，按可靠性从高到低：
+模块内把系统栏文字归成角色：`clock / network / wifi / carrier / battery / mark / hollow / speed / alarm / lockdate / date / island / other`，每个角色一个字重键。命中一个控件有三条路，按可靠性从高到低：
 
 | 识别方式 | 用在哪 | 为什么需要 |
 |---|---|---|
 | 实例身份（反射拿字段） | 电量数字 vs `%` | 它们是**两个不同 TextView**，用文案正则匹配会把超级岛里的充电通知文字一起加粗 |
 | 类名 `classify()` | 时钟 / 运营商 / 日期 / 网络类型 | 便宜，可按类缓存，覆盖大部分场景 |
-| 资源 entry 名 + 父链容器 | 锁屏状态栏运营商 / 状态栏网速指示器 / 锁屏闹钟倒计时 / 锁屏日期 | 真正写字的是普通 `android.widget.TextView`，类名零线索：运营商靠 `id/carrier_text` 与「位于 carrier 容器内」判定，顺带把同块的 `hd_text`、`plus_text` 一起纳管；网速指示器是同一套形状 —— `NetworkSpeedView`（LinearLayout）里的 `id/network_speed_number` 与 `id/network_speed_unit`，父链走到 `networkspeed` 即认领；闹钟倒计时反过来 —— 类名 `Chronometer` 会被日期规则吃掉，只能靠 `id/alarm_display` 从「日期」手里抢回来，所以用**全名**匹配，免得 `dream_overlay_alarm_set`、`zen_alarm_warning` 这些同样含 alarm 的 id 一起中招；锁屏日期要**两个条件同时成立**（entry 名含 `date` + 父链里出现钟面类），见 §5.6 |
+| 资源 entry 名 + 父链容器 | 锁屏状态栏运营商 / 状态栏网速指示器 / 锁屏闹钟倒计时 / 锁屏日期 / WiFi 代数角标 | 真正写字的是普通 `android.widget.TextView`，类名零线索：运营商靠 `id/carrier_text` 与「位于 carrier 容器内」判定，顺带把同块的 `hd_text`、`plus_text` 一起纳管；网速指示器是同一套形状 —— `NetworkSpeedView`（LinearLayout）里的 `id/network_speed_number` 与 `id/network_speed_unit`，父链走到 `networkspeed` 即认领；闹钟倒计时反过来 —— 类名 `Chronometer` 会被日期规则吃掉，只能靠 `id/alarm_display` 从「日期」手里抢回来，所以用**全名**匹配，免得 `dream_overlay_alarm_set`、`zen_alarm_warning` 这些同样含 alarm 的 id 一起中招；锁屏日期要**两个条件同时成立**（entry 名含 `date` + 父链里出现钟面类），见 §5.6；WiFi 代数角标同样用**全名**匹配 `wifi_standard`，写 `wifi` 子串会把 WiFi 磁贴详情里的文字一起牵进来，见 §5.8 |
 
 反向还有一层否决：`island / capsule / deepspace` 等类名与父链匹配的一律排除；控制中心 / 通知中心日期、超级岛胶囊、未分类文字属于「权重 > 0 才解锁」的显式开关，默认绝不触碰。
 
@@ -297,7 +300,7 @@ lrwxrwxrwx Roboto-Light.ttf   -> /data/system/theme/fonts/Roboto-Regular.ttf
 
 ### 5.5 爆炸半径：白名单，而不是「全进程」
 
-- 绘制期改写只放行状态栏 / 面板 chrome 的包名，外加 `carrier` / `speed` / `alarm` / `lockdate` 四个角色（它们的角色只可能来自写明 carrier / network-speed / alarm_display 的资源名，或「含 date 且位于钟面内」这一对条件，放开也不会溢出到别处）；
+- 绘制期改写只放行状态栏 / 面板 chrome 的包名，外加 `carrier` / `speed` / `alarm` / `lockdate` / `wifi` 五个角色（它们的角色只可能来自写明 carrier / network-speed / alarm_display / wifi_standard 的资源名，或「含 date 且位于钟面内」这一对条件，放开也不会溢出到别处）；
 - **锁屏钟面默认不改**：`com.miui.clock.*`、`com.android.keyguard.clock.*`、`com.android.systemui.customization.clocks.*` 的类名同样含 "clock"，但它们自己就在做 `wght` 轴动画（`DigitalClockTextView$AxisAnimation`、`ClockAxisStyle`），写进去等于制造新 bug。唯一例外是锁屏日期：它靠「entry 名含 `date` + 父链含钟面」这一对条件才能挤进来，而且**只放行日期与农历两行**，钟面数字照旧不碰（§5.6）；
 - 进程级 Typeface 重写（`Typeface.create(String,int)` / `Builder.build()` / `getMiProTypefaceWght460`）**默认关闭**，即便打开也要过「调用方角色」这一关。
 
@@ -353,15 +356,31 @@ mLunarCalendarInfo.setTypeface(dark ? tm : t);       // 农历行，和日期同
 
 「主卡」这里指 **ROM 拼接顺序里的第一段**（左侧那个标签，即 SIM1 位），不是「默认上网卡」；被藏掉的那一侧连同它的 `HD` / `+` 附属文字一起消失，因为它们本来就是那个标签的子 View。
 
+### 5.8 WiFi 图标上的代数小数字（`hf_ff_wifi`）
+
+HyperOS 在状态栏 WiFi 扇形图标上画一个小数字，告诉你连的是第几代 WiFi（`6` / `7`）。v1.4.0 之前它一直偏细，原因不是控件没被找到，而是**它取的 Typeface 根本不走我们已经布防的那条通道**：
+
+- 它是**真文字**：`res/layout/status_bar_wifi_group_inner.xml` line 30 是 `com.android.systemui.statusbar.AlphaOptimizedTextView`，`id/wifi_standard`（`0x7f0b0dc2`），`textAppearance = style/TextAppearance.StatusBar.WifiStandard`；`MiuiWifiViewBinder` 用 `setText(String.valueOf(代数))` 写这个数字，没得说的时候整块 `GONE`。同一布局里的 `wifi_signal` / `wifi_activity` 才是 `ImageView`；
+- Typeface 由 `MiuiConfigs.setMiuiStatusBarWifiTypeface(TextView[])`（smali line 1744）给：它先 `Typeface.create("mipro-bold", 0)`，**只有**解析出来的 `familyName` 仍以 `mipro` 开头时，才换成烘好的 `sFontWght660`（`'wght' 660` 烘在 `ro.miui.ui.font.mi_font_path` 那个文件上）。主题字体把别名指到自己的文件 → 这个 `startsWith` 判断落空 → 主题字体以 fvar 默认档原样落到 TextView 上，正是 §4.3 说的「只剩家族、没有字重」；
+- 它**不经过** `applyStatusBarTypeface`，所以 T1 看不见；类名 `AlphaOptimizedTextView` 也说明不了角色，于是 T11 早把它记成 `ROLE_NONE` 的负缓存 —— 这就是「状态栏别的地方都好了，只有它还细」的完整链路。
+
+v1.4.1 的接法和运营商 / 网速指示器是同一个形状，两条通道互为兜底：
+
+1. **按资源 entry 名认领**（`roleFromResourceId` → `ROLE_WIFI`）：只有 entry 名**精确等于** `wifi_standard` 才认领，写 `wifi` 这个子串会把控制中心 / QS 的 WiFi 文字一起牵进来。认领之后绘制期裁决（§5.4）照旧生效：主题重新应用、`setTextAppearance` 重写，下一帧就被改回来；
+2. **T16 = ROM 自己的写入点**：hook `setMiuiStatusBarWifiTypeface(TextView[])` 的 after，把这一批 TextView 打上 `ROLE_WIFI` 并重烘。它负责 binder 之后**第一帧**就是对的，也让 `hf_ff_wifi` 改动后立刻重绘 —— 这个控件 ROM 只在网络切换 / 主题变化时重新喂 Typeface，不主动 invalidate 就得等下一次连 WiFi 才看得到变化。
+
+覆盖范围：`ModernStatusBarWifiView` 只在 `IconManager` 里 new 一个实例，状态栏、锁屏状态栏与控制中心顶部那一行用的都是它，所以一处钩子三处都跟着好（真机已验）。**唯一不受影响的是 WiFi 磁贴展开详情里的图标**：`MiuiWifiTile` 选的是 `drawable/qs_detail_wifi_6_signal_0..3`，数字烘在矢量路径里，见 §6。
+
 ## 6. 已知限制
 
 - 只在小米17 / HyperOS 4.0.0.32 Beta / Android 17 上实测过。角色识别靠类名与资源名，其它 ROM（尤其 OS2/OS3）的控件类名与写入点不同，需要重新核对才能确认覆盖。
 - 绘制期改写的前提是主题字体**没有** `HVAR`/`MVAR`（绝大多数第三方 VF 字体都没有）；如果你的字体带这两个表，模块会自动放弃绘制期覆写，此时偏细无法修复，因为改字重会改字宽。
 - 性能与功耗只做过代码层面的结构分析（无常驻线程轮询、稳态每帧只走缓存查表、不 `requestLayout`、不持 wakelock），**CPU 占用、帧时间、电流这些定量数字尚不明确**：没有实测过，也不拍脑袋给数字。
-- `hf_ff_lockdate` 只能供一个值，而 ROM 在浅色壁纸（需要深色文字）时会把日期换成 `mipro-medium` = 500：取 `400` 时深色态会比原生略细，取 `500` 时普通态会略粗，中间值自行折中。
+- `hf_ff_lockdate` 只能供一个值，而 ROM 在浅色壁纸（需要深色文字）时会把日期换成 `mipro-medium` = 500，普通态要的其实是 400：1.4.1 起出厂值取 500（日期那行压在 500 的时钟数字下面，400 的主题字体看着明显偏细），代价是深色文字态之外的场景比原生略粗一点，嫌重往下调即可。
 - 锁屏日期换家族之后，中文日期（`10月27日`）用的就是主题字体自己的中文：如果这套主题字体不带中文，那几个字会走系统的中文 fallback，观感可能与 MiSans 不同。字重逻辑不受影响。
 - `hf_ff_singlecarrier` 只管锁屏那一个实例；它**改变显示内容**（第二张卡的运营商标签与竖线不再出现），所以默认关闭，且不是「隐藏第二张卡的 SIM」，通知栏 / 状态栏 / 控制中心照旧两个名字。若主卡标签为空（飞行模式、只插一张卡且卡槽在右侧等），模块不会隐藏任何东西。
 - 家族来源链第 4 级（`Typeface.DEFAULT`）无法在代码里自证保留中文 fallback 路由，所以只在文件通道不可用时兜底；真机日志里出现 `lockdate face source=default` 时，欢迎带这行日志反馈中文显示是否正常。
+- WiFi 磁贴**展开详情**里那个图标上的「6 / 7」**不是文字**：`MiuiWifiTile` 选的是 `drawable/qs_detail_wifi_6_signal_0..3` / `qs_detail_wifi_7_signal_0..3`（`MiuiWifiIcons.QS_WIFI_6_FULL_ICONS`），数字烘在矢量路径里，任何字重都动不了它。`hf_ff_wifi` 管的是状态栏 / 锁屏状态栏 / 控制中心顶部那一行共用的文字角标（§5.8）。
 
 ## 7. 自己构建
 

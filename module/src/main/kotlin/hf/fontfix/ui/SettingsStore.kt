@@ -25,6 +25,7 @@ object HfKeys {
     const val SPEED = "speed"
     const val ALARM = "alarm"
     const val LOCKDATE = "lockdate"
+    const val WIFI = "wifi"
     const val SINGLECARRIER = "singlecarrier"
     const val FAMILY = "family"
     const val G1 = "g1"
@@ -47,7 +48,8 @@ data class HfConfig(
     val other: Int = 0,
     val speed: Int = 900,
     val alarm: Int = 500,
-    val lockdate: Int = 400,
+    val lockdate: Int = 500,
+    val wifi: Int = 660,
     val singlecarrier: Boolean = false,
     val family: Boolean = false,
     val g1: Boolean = false,
@@ -127,7 +129,8 @@ class SettingsStore {
             other = weight(HfKeys.OTHER, 0),
             speed = weight(HfKeys.SPEED, 900),
             alarm = weight(HfKeys.ALARM, 500),
-            lockdate = weight(HfKeys.LOCKDATE, 400),
+            lockdate = weight(HfKeys.LOCKDATE, 500),
+            wifi = weight(HfKeys.WIFI, 660),
             singlecarrier = flag(HfKeys.SINGLECARRIER, false),
             family = flag(HfKeys.FAMILY, false),
             g1 = flag(HfKeys.G1, false),
@@ -161,6 +164,7 @@ class SettingsStore {
             HfKeys.SPEED to d.speed,
             HfKeys.ALARM to d.alarm,
             HfKeys.LOCKDATE to d.lockdate,
+            HfKeys.WIFI to d.wifi,
             HfKeys.SINGLECARRIER to if (d.singlecarrier) 1 else 0,
             HfKeys.FAMILY to if (d.family) 1 else 0,
             HfKeys.G1 to if (d.g1) 1 else 0,
